@@ -1,0 +1,150 @@
+// This Pine Script identifies price ranges for a specific month each year
+// @version=6
+indicator("Monthly Price Range Analysis", overlay=true)
+
+// Input to select month
+targetMonth = input.int(4, "Month to analyze", minval=1, maxval=12, step=1)
+var monthNames = array.from("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+monthName = array.get(monthNames, targetMonth - 1)
+
+// Function to check if current bar is in target month
+isTargetMonth() => month(time) == targetMonth
+
+// Store historical monthly data using arrays
+var int[] monthYears = array.new_int()
+var float[] monthHighs = array.new_float()
+var float[] monthLows = array.new_float()
+var int[] monthStartTimes = array.new_int()  // Using timestamps instead of bar indexes
+var int[] monthEndTimes = array.new_int()    // Using timestamps instead of bar indexes
+
+// Variables for tracking current month
+var int currentMonthYear = 0
+var float currentMonthHigh = na
+var float currentMonthLow = na
+var int currentMonthStartTime = na
+
+// Track current month
+if isTargetMonth() and (not isTargetMonth()[1] or (isTargetMonth()[1] and year(time) != currentMonthYear))
+    // New month started
+    currentMonthYear := year(time)
+    currentMonthHigh := high
+    currentMonthLow := low
+    currentMonthStartTime := time
+else if isTargetMonth()
+    // Continue tracking current month
+    currentMonthHigh := math.max(currentMonthHigh, high)
+    currentMonthLow := math.min(currentMonthLow, low)
+else if not isTargetMonth() and isTargetMonth()[1] and currentMonthYear > 0
+    // Month just ended, save the data
+    
+    // Remove oldest if we have more than 5
+    if array.size(monthYears) >= 5
+        array.shift(monthYears)
+        array.shift(monthHighs)
+        array.shift(monthLows)
+        array.shift(monthStartTimes)
+        array.shift(monthEndTimes)
+    
+    // Add current month data to history
+    array.push(monthYears, currentMonthYear)
+    array.push(monthHighs, currentMonthHigh)
+    array.push(monthLows, currentMonthLow)
+    array.push(monthStartTimes, currentMonthStartTime)
+    array.push(monthEndTimes, time[1])  // Use previous bar's time
+    
+    // Reset current month data
+    currentMonthYear := 0
+    currentMonthHigh := na
+    currentMonthLow := na
+    currentMonthStartTime := na
+
+// Draw boxes for historical months
+var box[] monthBoxes = array.new_box()
+var label[] monthLabels = array.new_label()
+
+// Clear old visuals when new bar
+if barstate.isfirst
+    for b in monthBoxes
+        box.delete(b)
+    array.clear(monthBoxes)
+    
+    for l in monthLabels
+        label.delete(l)
+    array.clear(monthLabels)
+
+// Draw historical month boxes
+if barstate.islast
+    // Clear old boxes first
+    for b in monthBoxes
+        box.delete(b)
+    array.clear(monthBoxes)
+    
+    for l in monthLabels
+        label.delete(l)
+    array.clear(monthLabels)
+    
+    // Draw new boxes for each historical month
+    if array.size(monthYears) > 0  // Only process if we have data
+        for i = 0 to array.size(monthYears) - 1
+            monthYear = array.get(monthYears, i)
+            monthHigh = array.get(monthHighs, i)
+            monthLow = array.get(monthLows, i)
+            monthStartTime = array.get(monthStartTimes, i)
+            monthEndTime = array.get(monthEndTimes, i)
+            
+            // Create box
+            monthBox = box.new(monthStartTime, monthHigh, monthEndTime, monthLow, bgcolor=color.new(color.blue, 90), border_color=color.new(color.blue, 50), border_width=2, xloc=xloc.bar_time)
+            array.push(monthBoxes, monthBox)
+            
+            // Calculate range percentage
+            rangePercent = ((monthHigh - monthLow) / monthLow) * 100
+            
+            // Add label
+            monthLabel = label.new(monthEndTime, monthLow, text=str.format("{0} {1}: {2} - {3}\nRange: {4}%", monthName, monthYear, str.tostring(monthLow, format.mintick), str.tostring(monthHigh, format.mintick), str.tostring(rangePercent, "#.##")), color=color.new(color.blue, 20), textcolor=color.white, style=label.style_label_down, yloc=yloc.price, xloc=xloc.bar_time)
+            array.push(monthLabels, monthLabel)
+    
+    // Draw current month box if we're in the target month
+    if isTargetMonth() and currentMonthYear > 0
+        currentBox = box.new(currentMonthStartTime, currentMonthHigh, time, currentMonthLow, bgcolor=color.new(color.green, 80), border_color=color.new(color.green, 40), border_width=2, xloc=xloc.bar_time)
+        array.push(monthBoxes, currentBox)
+
+// Statistics table
+var table statsTable = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 80), frame_color=color.new(color.black, 80), frame_width=1, border_width=1)
+if barstate.islast
+    table.cell(statsTable, 0, 0, monthName + " Analysis", bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.cell(statsTable, 1, 0, str.tostring(year(time)), bgcolor=color.new(color.blue, 20), text_size=size.small)
+    
+    table.cell(statsTable, 0, 1, "Current Status", text_size=size.small)
+    table.cell(statsTable, 1, 1, isTargetMonth() ? "In " + monthName : "Not " + monthName, text_size=size.small)
+    
+    if isTargetMonth() and currentMonthYear > 0
+        table.cell(statsTable, 0, 2, monthName + " High", text_size=size.small)
+        table.cell(statsTable, 1, 2, str.tostring(currentMonthHigh, format.mintick), text_size=size.small)
+        
+        table.cell(statsTable, 0, 3, monthName + " Low", text_size=size.small)
+        table.cell(statsTable, 1, 3, str.tostring(currentMonthLow, format.mintick), text_size=size.small)
+        
+        // Calculate current range percentage
+        currentRangePercent = ((currentMonthHigh - currentMonthLow) / currentMonthLow) * 100
+        table.cell(statsTable, 0, 4, "Range %", text_size=size.small)
+        table.cell(statsTable, 1, 4, str.tostring(currentRangePercent, "#.##") + "%", text_size=size.small)
+    else
+        table.cell(statsTable, 0, 2, monthName + " High", text_size=size.small)
+        table.cell(statsTable, 1, 2, "N/A", text_size=size.small)
+        
+        table.cell(statsTable, 0, 3, monthName + " Low", text_size=size.small)
+        table.cell(statsTable, 1, 3, "N/A", text_size=size.small)
+        
+        table.cell(statsTable, 0, 4, "Range %", text_size=size.small)
+        table.cell(statsTable, 1, 4, "N/A", text_size=size.small)
+    
+    // Show visible years
+    visibleYears = ""
+    if array.size(monthYears) > 0  // Only process if we have data
+        for i = 0 to array.size(monthYears) - 1
+            if i > 0
+                visibleYears := visibleYears + ", "
+            visibleYears := visibleYears + str.tostring(array.get(monthYears, i))
+    
+    table.cell(statsTable, 0, 5, "Showing Years", text_size=size.small)
+    table.cell(statsTable, 1, 5, visibleYears == "" ? "None yet" : visibleYears, text_size=size.small)

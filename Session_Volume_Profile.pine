@@ -1,0 +1,316 @@
+// @version=6
+indicator("Session Volume Profile", overlay=true, max_labels_count=500)
+
+// Input parameters
+numRows = input.int(20, "Number of Profile Rows", minval=2, maxval=100)
+profileWidth = input.float(0.75, "Profile Width", minval=0.1, maxval=2.0, step=0.1)
+transparency = input.int(70, "Profile Transparency", minval=0, maxval=100)
+showPOC = input.bool(true, "Show POC Line")
+pocWidth = input.int(3, "POC Line Width", minval=1, maxval=10)
+pocColor = input.color(color.yellow, "POC Color")
+asianColor = input.color(color.blue, "Asian Session Color")
+europeanColor = input.color(color.green, "European Session Color")
+americanColor = input.color(color.red, "American Session Color")
+showYesterday = input.bool(true, "Show Yesterday's Sessions")
+yesterdayTransparency = input.int(85, "Yesterday Transparency", minval=0, maxval=100)
+
+// Session times (in UTC)
+asianSessionStart = 0     // 00:00 UTC
+asianSessionEnd = 8       // 08:00 UTC
+europeanSessionStart = 8  // 08:00 UTC
+europeanSessionEnd = 16   // 16:00 UTC
+americanSessionStart = 14 // 14:00 UTC
+americanSessionEnd = 22   // 22:00 UTC
+
+// Structure to store session data
+type SessionData
+    float high
+    float low
+    float pocLevel
+    int pocVolume
+    int[] volumeArray
+    string sessionType
+    int startBar
+    int endBar
+
+// Initialize session data arrays
+var SessionData asianToday = SessionData.new(0.0, 0.0, 0.0, 0, array.new_int(numRows, 0), "Asian", 0, 0)
+var SessionData europeanToday = SessionData.new(0.0, 0.0, 0.0, 0, array.new_int(numRows, 0), "European", 0, 0)
+var SessionData americanToday = SessionData.new(0.0, 0.0, 0.0, 0, array.new_int(numRows, 0), "American", 0, 0)
+var SessionData asianYesterday = SessionData.new(0.0, 0.0, 0.0, 0, array.new_int(numRows, 0), "Asian", 0, 0)
+var SessionData europeanYesterday = SessionData.new(0.0, 0.0, 0.0, 0, array.new_int(numRows, 0), "European", 0, 0)
+var SessionData americanYesterday = SessionData.new(0.0, 0.0, 0.0, 0, array.new_int(numRows, 0), "American", 0, 0)
+
+// Track current day
+var int currentDay = dayofmonth(time)
+var int currentMonth = month(time)
+var int currentYear = year(time)
+
+// Function to check if today is a new day
+isDayStart() =>
+    dayofmonth(time) != currentDay or month(time) != currentMonth or year(time) != currentYear
+
+// Current session tracking
+var string currentSession = "None"
+var bool asianStarted = false
+var bool europeanStarted = false
+var bool americanStarted = false
+
+// Function to determine the current market session
+getCurrentSession() =>
+    int currentHour = hour(time)
+    
+    if currentHour >= asianSessionStart and currentHour < asianSessionEnd
+        "Asian"
+    else if currentHour >= europeanSessionStart and currentHour < europeanSessionEnd
+        "European"
+    else if currentHour >= americanSessionStart and currentHour < americanSessionEnd
+        "American"
+    else
+        "None"
+
+// Check for session changes
+newSession = getCurrentSession()
+if newSession != currentSession
+    // Record start bar for new session
+    if newSession == "Asian" and not asianStarted
+        asianToday.startBar := bar_index
+        asianStarted := true
+    else if newSession == "European" and not europeanStarted
+        europeanToday.startBar := bar_index
+        europeanStarted := true
+    else if newSession == "American" and not americanStarted
+        americanToday.startBar := bar_index
+        americanStarted := true
+    
+    // Record end bar for ending session
+    if currentSession == "Asian" and newSession != "Asian"
+        asianToday.endBar := bar_index - 1
+    else if currentSession == "European" and newSession != "European"
+        europeanToday.endBar := bar_index - 1
+    else if currentSession == "American" and newSession != "American"
+        americanToday.endBar := bar_index - 1
+    
+    currentSession := newSession
+
+// Check for day change
+bool isNewDay = isDayStart()
+if isNewDay
+    currentDay := dayofmonth(time)
+    currentMonth := month(time)
+    currentYear := year(time)
+    
+    // Move today's data to yesterday
+    asianYesterday := asianToday
+    europeanYesterday := europeanToday
+    americanYesterday := americanToday
+    
+    // Reset today's data
+    asianToday := SessionData.new(0.0, 0.0, 0.0, 0, array.new_int(numRows, 0), "Asian", 0, 0)
+    europeanToday := SessionData.new(0.0, 0.0, 0.0, 0, array.new_int(numRows, 0), "European", 0, 0)
+    americanToday := SessionData.new(0.0, 0.0, 0.0, 0, array.new_int(numRows, 0), "American", 0, 0)
+    
+    // Reset session flags
+    asianStarted := false
+    europeanStarted := false
+    americanStarted := false
+
+// Function to get session color
+getSessionColor(string session) =>
+    if session == "Asian"
+        asianColor
+    else if session == "European"
+        europeanColor
+    else if session == "American"
+        americanColor
+    else
+        color.blue
+
+// Function to check if we're in a specific session
+isInCurrentSession(string sessionName) =>
+    newSession = getCurrentSession()
+    newSession == sessionName
+
+// Function to get the current session data
+getSessionData(string sessionName, bool isToday) =>
+    if isToday
+        if sessionName == "Asian"
+            asianToday
+        else if sessionName == "European"
+            europeanToday
+        else if sessionName == "American"
+            americanToday
+        else
+            na
+    else
+        if sessionName == "Asian"
+            asianYesterday
+        else if sessionName == "European"
+            europeanYesterday
+        else if sessionName == "American"
+            americanYesterday
+        else
+            na
+
+// Process data for current session only
+processCurrentSession() =>
+    sessionName = getCurrentSession()
+    if sessionName != "None"
+        SessionData sessionData = getSessionData(sessionName, true)
+        
+        // Update high/low
+        if sessionData.high == 0.0 or high > sessionData.high
+            if sessionName == "Asian"
+                asianToday.high := high
+            else if sessionName == "European"
+                europeanToday.high := high
+            else if sessionName == "American"
+                americanToday.high := high
+        
+        if sessionData.low == 0.0 or low < sessionData.low
+            if sessionName == "Asian"
+                asianToday.low := low
+            else if sessionName == "European"
+                europeanToday.low := low
+            else if sessionName == "American"
+                americanToday.low := low
+        
+        // Update session data
+        sessionHigh = sessionData.high
+        sessionLow = sessionData.low
+        
+        if sessionHigh > sessionLow
+            pricePerRay = (sessionHigh - sessionLow) / numRows
+            
+            // Current bar's typical price
+            typicalPrice = (high + low + close) / 3
+            
+            // Calculate the position in the price range
+            position = math.floor((typicalPrice - sessionLow) / pricePerRay)
+            position := math.min(math.max(position, 0), numRows - 1)
+            
+            // Add volume to the corresponding price level
+            currentVolume = array.get(sessionData.volumeArray, position)
+            newVolume = currentVolume + int(nz(volume))
+            
+            if sessionName == "Asian"
+                array.set(asianToday.volumeArray, position, newVolume)
+                if newVolume > asianToday.pocVolume
+                    asianToday.pocVolume := newVolume
+                    asianToday.pocLevel := sessionLow + (position + 0.5) * pricePerRay
+            else if sessionName == "European"
+                array.set(europeanToday.volumeArray, position, newVolume)
+                if newVolume > europeanToday.pocVolume
+                    europeanToday.pocVolume := newVolume
+                    europeanToday.pocLevel := sessionLow + (position + 0.5) * pricePerRay
+            else if sessionName == "American"
+                array.set(americanToday.volumeArray, position, newVolume)
+                if newVolume > americanToday.pocVolume
+                    americanToday.pocVolume := newVolume
+                    americanToday.pocLevel := sessionLow + (position + 0.5) * pricePerRay
+
+// Process current session
+processCurrentSession()
+
+// Function to draw profile for a session
+drawProfile(SessionData sessionData, bool isYesterday) =>
+    if sessionData.high > sessionData.low and (sessionData.startBar > 0 or isYesterday)
+        // Get max volume for scaling
+        maxVolume = array.max(sessionData.volumeArray)
+        
+        if maxVolume > 0
+            // Calculate start and width based on session
+            int profileStart = isYesterday ? bar_index : sessionData.startBar
+            int profileWidth = int(5 * profileWidth)
+            
+            // Get session color and adjust transparency
+            color sessionColor = getSessionColor(sessionData.sessionType)
+            int useTransparency = isYesterday ? yesterdayTransparency : transparency
+            
+            // Calculate price per ray
+            float pricePerRay = (sessionData.high - sessionData.low) / numRows
+            
+            // Draw volume bars
+            for i = 0 to numRows - 1
+                price = sessionData.low + i * pricePerRay
+                vol = array.get(sessionData.volumeArray, i)
+                
+                // Calculate normalized width based on volume
+                normWidth = int((vol / maxVolume) * profileWidth)
+                
+                // Only draw if there's volume
+                if vol > 0
+                    box.new(left=profileStart, right=profileStart + normWidth, top=int(price + pricePerRay), bottom=int(price), bgcolor=color.new(sessionColor, useTransparency), border_color=color.new(sessionColor, useTransparency - 10), border_width=1, xloc=xloc.bar_index)
+            
+            // Draw POC line
+            if showPOC and sessionData.pocVolume > 0
+                line.new(x1=profileStart, x2=profileStart + profileWidth, y1=int(sessionData.pocLevel), y2=int(sessionData.pocLevel), color=color.new(pocColor, useTransparency), width=pocWidth, xloc=xloc.bar_index)
+            
+            // Return true if profile was drawn
+            true
+        else
+            false
+    else
+        false
+
+// Set offset for yesterday's profiles
+var int yesterdayOffset = 15
+
+// Draw profiles
+if barstate.islast
+    // Draw today's profiles for sessions that have started
+    if asianStarted
+        drawProfile(asianToday, false)
+    
+    if europeanStarted
+        drawProfile(europeanToday, false)
+    
+    if americanStarted
+        drawProfile(americanToday, false)
+    
+    // Draw yesterday's profiles if enabled
+    if showYesterday
+        // Only draw if we have data
+        if asianYesterday.high > 0 and asianYesterday.low > 0
+            drawProfile(asianYesterday, true)
+        
+        if europeanYesterday.high > 0 and europeanYesterday.low > 0
+            drawProfile(europeanYesterday, true)
+        
+        if americanYesterday.high > 0 and americanYesterday.low > 0
+            drawProfile(americanYesterday, true)
+    
+    // Display session info
+    var label todayLabel = na
+    var label yesterdayLabel = na
+    
+    if not na(todayLabel)
+        label.delete(todayLabel)
+    
+    // Create today session text only for started sessions
+    string todayText = "Today Sessions\n"
+    if asianStarted
+        todayText += "Asian: " + str.tostring(asianToday.pocLevel, "#.##") + "\n"
+    if europeanStarted
+        todayText += "European: " + str.tostring(europeanToday.pocLevel, "#.##") + "\n"
+    if americanStarted
+        todayText += "American: " + str.tostring(americanToday.pocLevel, "#.##")
+    
+    // Only create label if we have at least one session
+    if todayText != "Today Sessions\n"
+        todayLabel := label.new(bar_index + 5, math.max(asianToday.high, math.max(europeanToday.high, americanToday.high)), text=todayText, style=label.style_label_down, color=color.new(color.gray, 90), textcolor=color.white, xloc=xloc.bar_index)
+    
+    if showYesterday
+        if not na(yesterdayLabel)
+            label.delete(yesterdayLabel)
+        
+        string yesterdayText = "Yesterday Sessions\n"
+        if asianYesterday.high > 0
+            yesterdayText += "Asian: " + str.tostring(asianYesterday.pocLevel, "#.##") + "\n"
+        if europeanYesterday.high > 0
+            yesterdayText += "European: " + str.tostring(europeanYesterday.pocLevel, "#.##") + "\n"
+        if americanYesterday.high > 0
+            yesterdayText += "American: " + str.tostring(americanYesterday.pocLevel, "#.##")
+        
+        if yesterdayText != "Yesterday Sessions\n"
+            yesterdayLabel := label.new(bar_index + yesterdayOffset, math.max(asianYesterday.high, math.max(europeanYesterday.high, americanYesterday.high)), text=yesterdayText, style=label.style_label_down, color=color.new(color.gray, 90), textcolor=color.white, xloc=xloc.bar_index)

@@ -18,6 +18,12 @@ londonColor = input.color(color.new(color.blue, 90), "Màu phiên London", group
 showNYSession = input.bool(true, "Hiển thị phiên Mỹ", group="Forex Sessions")
 nyColor = input.color(color.new(color.orange, 90), "Màu phiên Mỹ", group="Forex Sessions")
 
+// === BOS & CHOCH INPUTS ===
+showBOS = input.bool(true, "Hiển thị BOS (Break of Structure)", group="BOS & CHOCH")
+bosColor = input.color(color.new(color.purple, 0), "Màu BOS", group="BOS & CHOCH")
+showCHOCH = input.bool(true, "Hiển thị CHOCH (Change of Character)", group="BOS & CHOCH")
+chochColor = input.color(color.new(color.fuchsia, 0), "Màu CHOCH", group="BOS & CHOCH")
+
 // === FOREX SESSION LOGIC ===
 // Định nghĩa thời gian các phiên Forex (GMT)
 // Phiên Á (Tokyo/Sydney): 23:00 (hôm trước) - 08:00 GMT
@@ -166,6 +172,61 @@ if showLines and not na(pivotLow)
 // === PLOT MARKERS ===
 plotshape(pivotHigh, "Đỉnh", shape.triangledown, location.abovebar, highColor, offset=-rightBars, size=size.tiny)
 plotshape(pivotLow, "Đáy", shape.triangleup, location.belowbar, lowColor, offset=-rightBars, size=size.tiny)
+
+// === BOS & CHOCH LOGIC ===
+// Biến theo dõi cho BOS và CHOCH
+var float prevHighForBOS = na
+var float prevLowForBOS = na
+var int trendDirection = 0  // 1 = uptrend, -1 = downtrend, 0 = chưa xác định
+
+// Cập nhật previous highs/lows cho BOS detection
+if not na(pivotHigh)
+    prevHighForBOS := pivotHigh
+if not na(pivotLow)
+    prevLowForBOS := pivotLow
+
+// Detect BOS (Break of Structure)
+// BOS xảy ra khi giá phá vỡ một swing high/low trước đó
+bosDetected = false
+bosType = ""  // "bullish" hoặc "bearish"
+
+if showBOS and not na(prevHighForBOS) and not na(prevLowForBOS)
+    // BOS Bullish: Giá close vượt qua previous high
+    if close > prevHighForBOS and close[1] <= prevHighForBOS
+        bosDetected := true
+        bosType := "bullish"
+        label.new(bar_index, high, "BOS ↑", style=label.style_label_up, color=bosColor, textcolor=color.white, size=size.small)
+    // BOS Bearish: Giá close thủng previous low
+    if close < prevLowForBOS and close[1] >= prevLowForBOS
+        bosDetected := true
+        bosType := "bearish"
+        label.new(bar_index, low, "BOS ↓", style=label.style_label_down, color=bosColor, textcolor=color.white, size=size.small)
+
+// Detect CHOCH (Change of Character)
+// CHOCH xảy ra khi thị trường thay đổi xu hướng
+chochDetected = false
+
+if showCHOCH and not na(lastHighPrice) and not na(lastLowPrice)
+    // Update trend direction dựa trên pivot highs và lows
+    if not na(pivotHigh) and not na(lastHighPrice)
+        if pivotHigh > lastHighPrice
+            trendDirection := 1  // Higher high = uptrend
+    if not na(pivotLow) and not na(lastLowPrice)
+        if pivotLow < lastLowPrice
+            trendDirection := -1  // Lower low = downtrend
+
+    // CHOCH: Khi trong uptrend nhưng tạo lower low, hoặc trong downtrend nhưng tạo higher high
+    if trendDirection == 1 and not na(pivotLow) and not na(lastLowPrice)
+        if pivotLow < lastLowPrice
+            chochDetected := true
+            trendDirection := -1
+            label.new(bar_index[rightBars], pivotLow, "CHOCH ↓", style=label.style_label_down, color=chochColor, textcolor=color.white, size=size.small)
+
+    if trendDirection == -1 and not na(pivotHigh) and not na(lastHighPrice)
+        if pivotHigh > lastHighPrice
+            chochDetected := true
+            trendDirection := 1
+            label.new(bar_index[rightBars], pivotHigh, "CHOCH ↑", style=label.style_label_up, color=chochColor, textcolor=color.white, size=size.small)
 
 // === HIỂN THỊ THÔNG TIN ===
 var table infoTable = table.new(position.top_right, 2, 3, bgcolor=color.new(color.gray, 80))

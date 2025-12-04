@@ -9,6 +9,30 @@ showLines = input.bool(true, "Hiển thị đường nối")
 highColor = input.color(color.red, "Màu đỉnh")
 lowColor = input.color(color.green, "Màu đáy")
 
+// === FOREX SESSION INPUTS ===
+showForexSessions = input.bool(true, "Hiển thị phiên Forex", group="Forex Sessions")
+showAsianSession = input.bool(true, "Hiển thị phiên Á", group="Forex Sessions")
+asianColor = input.color(color.new(color.yellow, 90), "Màu phiên Á", group="Forex Sessions")
+showLondonSession = input.bool(true, "Hiển thị phiên London", group="Forex Sessions")
+londonColor = input.color(color.new(color.blue, 90), "Màu phiên London", group="Forex Sessions")
+showNYSession = input.bool(true, "Hiển thị phiên Mỹ", group="Forex Sessions")
+nyColor = input.color(color.new(color.orange, 90), "Màu phiên Mỹ", group="Forex Sessions")
+
+// === FOREX SESSION LOGIC ===
+// Định nghĩa thời gian các phiên Forex (GMT)
+// Phiên Á (Tokyo): 00:00 - 09:00 GMT
+// Phiên London: 08:00 - 17:00 GMT
+// Phiên Mỹ (New York): 13:00 - 22:00 GMT
+
+asianSession = (hour(time, "GMT") >= 0 and hour(time, "GMT") < 9)
+londonSession = (hour(time, "GMT") >= 8 and hour(time, "GMT") < 17)
+nySession = (hour(time, "GMT") >= 13 and hour(time, "GMT") < 22)
+
+// Vẽ background cho các phiên
+bgcolor(showForexSessions and showAsianSession and asianSession ? asianColor : na, title="Phiên Á")
+bgcolor(showForexSessions and showLondonSession and londonSession ? londonColor : na, title="Phiên London")
+bgcolor(showForexSessions and showNYSession and nySession ? nyColor : na, title="Phiên Mỹ")
+
 // === PHÁT HIỆN ĐỈNH/ĐÁY ===
 // Sử dụng hàm ta.pivothigh và ta.pivotlow
 pivotHigh = ta.pivothigh(high, leftBars, rightBars)

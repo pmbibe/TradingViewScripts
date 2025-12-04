@@ -1,0 +1,85 @@
+//@version=6
+indicator("Xác định Đỉnh/Đáy", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// === INPUTS ===
+leftBars = input.int(5, "Số nến bên trái", minval=1, tooltip="Số nến bên trái để xác nhận đỉnh/đáy")
+rightBars = input.int(5, "Số nến bên phải", minval=1, tooltip="Số nến bên phải để xác nhận đỉnh/đáy")
+showLabels = input.bool(true, "Hiển thị nhãn")
+showLines = input.bool(true, "Hiển thị đường nối")
+highColor = input.color(color.red, "Màu đỉnh")
+lowColor = input.color(color.green, "Màu đáy")
+
+// === PHÁT HIỆN ĐỈNH/ĐÁY ===
+// Sử dụng hàm ta.pivothigh và ta.pivotlow
+pivotHigh = ta.pivothigh(high, leftBars, rightBars)
+pivotLow = ta.pivotlow(low, leftBars, rightBars)
+
+// === VẼ NHÃN ===
+if showLabels and not na(pivotHigh)
+    label.new(
+         bar_index[rightBars], 
+         pivotHigh, 
+         "Đỉnh\n" + str.tostring(pivotHigh, format.mintick),
+         style=label.style_label_down,
+         color=highColor,
+         textcolor=color.white,
+         size=size.small
+         )
+
+if showLabels and not na(pivotLow)
+    label.new(
+         bar_index[rightBars], 
+         pivotLow, 
+         "Đáy\n" + str.tostring(pivotLow, format.mintick),
+         style=label.style_label_up,
+         color=lowColor,
+         textcolor=color.white,
+         size=size.small
+         )
+
+// === VẼ ĐƯỜNG NỐI CÁC ĐỈNH/ĐÁY ===
+var line lastHighLine = na
+var line lastLowLine = na
+var float lastHighPrice = na
+var int lastHighIndex = na
+var float lastLowPrice = na
+var int lastLowIndex = na
+
+if showLines and not na(pivotHigh)
+    if not na(lastHighPrice)
+        lastHighLine := line.new(
+             lastHighIndex, lastHighPrice,
+             bar_index[rightBars], pivotHigh,
+             color=highColor,
+             width=1,
+             style=line.style_dashed
+             )
+    lastHighPrice := pivotHigh
+    lastHighIndex := bar_index[rightBars]
+
+if showLines and not na(pivotLow)
+    if not na(lastLowPrice)
+        lastLowLine := line.new(
+             lastLowIndex, lastLowPrice,
+             bar_index[rightBars], pivotLow,
+             color=lowColor,
+             width=1,
+             style=line.style_dashed
+             )
+    lastLowPrice := pivotLow
+    lastLowIndex := bar_index[rightBars]
+
+// === PLOT MARKERS ===
+plotshape(pivotHigh, "Đỉnh", shape.triangledown, location.abovebar, highColor, offset=-rightBars, size=size.tiny)
+plotshape(pivotLow, "Đáy", shape.triangleup, location.belowbar, lowColor, offset=-rightBars, size=size.tiny)
+
+// === HIỂN THỊ THÔNG TIN ===
+var table infoTable = table.new(position.top_right, 2, 3, bgcolor=color.new(color.gray, 80))
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "Đỉnh gần nhất:", text_color=color.white, text_halign=text.align_left)
+    table.cell(infoTable, 1, 0, str.tostring(lastHighPrice, format.mintick), text_color=highColor, text_halign=text.align_right)
+    table.cell(infoTable, 0, 1, "Đáy gần nhất:", text_color=color.white, text_halign=text.align_left)
+    table.cell(infoTable, 1, 1, str.tostring(lastLowPrice, format.mintick), text_color=lowColor, text_halign=text.align_right)
+    table.cell(infoTable, 0, 2, "Cài đặt:", text_color=color.white, text_halign=text.align_left)
+    table.cell(infoTable, 1, 2, str.tostring(leftBars) + "/" + str.tostring(rightBars), text_color=color.white, text_halign=text.align_right)

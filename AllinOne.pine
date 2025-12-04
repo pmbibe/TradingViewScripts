@@ -33,65 +33,74 @@ var bool wasAsianSession = false
 var int asianStartBar = na
 var float asianHigh = na
 var float asianLow = na
+var box asianBox = na
 
 // Biến theo dõi phiên London
 var bool wasLondonSession = false
 var int londonStartBar = na
 var float londonHigh = na
 var float londonLow = na
+var box londonBox = na
 
 // Biến theo dõi phiên Mỹ
 var bool wasNYSession = false
 var int nyStartBar = na
 var float nyHigh = na
 var float nyLow = na
+var box nyBox = na
 
 // Logic cho phiên Á
 if showForexSessions and showAsianSession
     if asianSession and not wasAsianSession
-        // Phiên mới bắt đầu
+        // Phiên mới bắt đầu, tạo box
         asianStartBar := bar_index
         asianHigh := high
         asianLow := low
+        asianBox := box.new(asianStartBar, asianHigh, bar_index, asianLow, border_color=color.new(color.yellow, 50), bgcolor=asianColor, text="Asian", text_color=color.new(color.yellow, 0), text_size=size.small)
     else if asianSession
-        // Đang trong phiên, cập nhật high/low
+        // Đang trong phiên, cập nhật high/low và box
         asianHigh := math.max(asianHigh, high)
         asianLow := math.min(asianLow, low)
-    else if not asianSession and wasAsianSession
-        // Phiên vừa kết thúc, vẽ box
-        box.new(asianStartBar, asianHigh, bar_index, asianLow, border_color=color.new(color.yellow, 50), bgcolor=asianColor, text="Asian", text_color=color.new(color.yellow, 0), text_size=size.small)
+        if not na(asianBox)
+            box.set_top(asianBox, asianHigh)
+            box.set_bottom(asianBox, asianLow)
+            box.set_right(asianBox, bar_index)
     wasAsianSession := asianSession
 
 // Logic cho phiên London
 if showForexSessions and showLondonSession
     if londonSession and not wasLondonSession
-        // Phiên mới bắt đầu
+        // Phiên mới bắt đầu, tạo box
         londonStartBar := bar_index
         londonHigh := high
         londonLow := low
+        londonBox := box.new(londonStartBar, londonHigh, bar_index, londonLow, border_color=color.new(color.blue, 50), bgcolor=londonColor, text="London", text_color=color.new(color.blue, 0), text_size=size.small)
     else if londonSession
-        // Đang trong phiên, cập nhật high/low
+        // Đang trong phiên, cập nhật high/low và box
         londonHigh := math.max(londonHigh, high)
         londonLow := math.min(londonLow, low)
-    else if not londonSession and wasLondonSession
-        // Phiên vừa kết thúc, vẽ box
-        box.new(londonStartBar, londonHigh, bar_index, londonLow, border_color=color.new(color.blue, 50), bgcolor=londonColor, text="London", text_color=color.new(color.blue, 0), text_size=size.small)
+        if not na(londonBox)
+            box.set_top(londonBox, londonHigh)
+            box.set_bottom(londonBox, londonLow)
+            box.set_right(londonBox, bar_index)
     wasLondonSession := londonSession
 
 // Logic cho phiên Mỹ
 if showForexSessions and showNYSession
     if nySession and not wasNYSession
-        // Phiên mới bắt đầu
+        // Phiên mới bắt đầu, tạo box
         nyStartBar := bar_index
         nyHigh := high
         nyLow := low
+        nyBox := box.new(nyStartBar, nyHigh, bar_index, nyLow, border_color=color.new(color.orange, 50), bgcolor=nyColor, text="NY", text_color=color.new(color.orange, 0), text_size=size.small)
     else if nySession
-        // Đang trong phiên, cập nhật high/low
+        // Đang trong phiên, cập nhật high/low và box
         nyHigh := math.max(nyHigh, high)
         nyLow := math.min(nyLow, low)
-    else if not nySession and wasNYSession
-        // Phiên vừa kết thúc, vẽ box
-        box.new(nyStartBar, nyHigh, bar_index, nyLow, border_color=color.new(color.orange, 50), bgcolor=nyColor, text="NY", text_color=color.new(color.orange, 0), text_size=size.small)
+        if not na(nyBox)
+            box.set_top(nyBox, nyHigh)
+            box.set_bottom(nyBox, nyLow)
+            box.set_right(nyBox, bar_index)
     wasNYSession := nySession
 
 // === PHÁT HIỆN ĐỈNH/ĐÁY ===

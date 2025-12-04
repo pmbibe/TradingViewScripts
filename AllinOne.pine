@@ -28,10 +28,86 @@ asianSession = (hour(time, "GMT") >= 0 and hour(time, "GMT") < 9)
 londonSession = (hour(time, "GMT") >= 8 and hour(time, "GMT") < 17)
 nySession = (hour(time, "GMT") >= 13 and hour(time, "GMT") < 22)
 
-// Vẽ background cho các phiên
-bgcolor(showForexSessions and showAsianSession and asianSession ? asianColor : na, title="Phiên Á")
-bgcolor(showForexSessions and showLondonSession and londonSession ? londonColor : na, title="Phiên London")
-bgcolor(showForexSessions and showNYSession and nySession ? nyColor : na, title="Phiên Mỹ")
+// Biến theo dõi phiên Á
+var bool wasAsianSession = false
+var int asianStartBar = na
+var float asianHigh = na
+var float asianLow = na
+
+// Biến theo dõi phiên London
+var bool wasLondonSession = false
+var int londonStartBar = na
+var float londonHigh = na
+var float londonLow = na
+
+// Biến theo dõi phiên Mỹ
+var bool wasNYSession = false
+var int nyStartBar = na
+var float nyHigh = na
+var float nyLow = na
+
+// Logic cho phiên Á
+if showForexSessions and showAsianSession
+    if asianSession and not wasAsianSession
+        // Phiên mới bắt đầu
+        asianStartBar := bar_index
+        asianHigh := high
+        asianLow := low
+    else if asianSession
+        // Đang trong phiên, cập nhật high/low
+        asianHigh := math.max(asianHigh, high)
+        asianLow := math.min(asianLow, low)
+    else if not asianSession and wasAsianSession
+        // Phiên vừa kết thúc, vẽ box
+        box.new(asianStartBar, asianHigh, bar_index, asianLow,
+                border_color=color.new(color.yellow, 50),
+                bgcolor=asianColor,
+                text="Asian",
+                text_color=color.new(color.yellow, 0),
+                text_size=size.small)
+    wasAsianSession := asianSession
+
+// Logic cho phiên London
+if showForexSessions and showLondonSession
+    if londonSession and not wasLondonSession
+        // Phiên mới bắt đầu
+        londonStartBar := bar_index
+        londonHigh := high
+        londonLow := low
+    else if londonSession
+        // Đang trong phiên, cập nhật high/low
+        londonHigh := math.max(londonHigh, high)
+        londonLow := math.min(londonLow, low)
+    else if not londonSession and wasLondonSession
+        // Phiên vừa kết thúc, vẽ box
+        box.new(londonStartBar, londonHigh, bar_index, londonLow,
+                border_color=color.new(color.blue, 50),
+                bgcolor=londonColor,
+                text="London",
+                text_color=color.new(color.blue, 0),
+                text_size=size.small)
+    wasLondonSession := londonSession
+
+// Logic cho phiên Mỹ
+if showForexSessions and showNYSession
+    if nySession and not wasNYSession
+        // Phiên mới bắt đầu
+        nyStartBar := bar_index
+        nyHigh := high
+        nyLow := low
+    else if nySession
+        // Đang trong phiên, cập nhật high/low
+        nyHigh := math.max(nyHigh, high)
+        nyLow := math.min(nyLow, low)
+    else if not nySession and wasNYSession
+        // Phiên vừa kết thúc, vẽ box
+        box.new(nyStartBar, nyHigh, bar_index, nyLow,
+                border_color=color.new(color.orange, 50),
+                bgcolor=nyColor,
+                text="NY",
+                text_color=color.new(color.orange, 0),
+                text_size=size.small)
+    wasNYSession := nySession
 
 // === PHÁT HIỆN ĐỈNH/ĐÁY ===
 // Sử dụng hàm ta.pivothigh và ta.pivotlow

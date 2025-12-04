@@ -25,14 +25,14 @@ showCHOCH = input.bool(true, "Hiển thị CHOCH (Change of Character)", group="
 chochColor = input.color(color.new(color.fuchsia, 0), "Màu CHOCH", group="BOS & CHOCH")
 
 // === FOREX SESSION LOGIC ===
-// Định nghĩa thời gian các phiên Forex (GMT)
-// Phiên Á (Tokyo/Sydney): 23:00 (hôm trước) - 08:00 GMT
-// Phiên London (Châu Âu): 07:00 - 16:00 GMT
-// Phiên Mỹ (New York): 12:00 - 21:00 GMT
+// Định nghĩa thời gian các phiên Forex (UTC)
+// Phiên Á (Tokyo/Sydney): 21:00 - 09:00 UTC (9:00 PM - 9:00 AM)
+// Phiên London (Châu Âu): 07:00 - 16:00 UTC (7:00 AM - 4:00 PM)
+// Phiên Mỹ (New York): 13:00 - 22:00 UTC (1:00 PM - 10:00 PM)
 
-asianSession = (hour(time, "GMT") >= 23 or hour(time, "GMT") < 8)
+asianSession = (hour(time, "GMT") >= 21 or hour(time, "GMT") < 9)
 londonSession = (hour(time, "GMT") >= 7 and hour(time, "GMT") < 16)
-nySession = (hour(time, "GMT") >= 12 and hour(time, "GMT") < 21)
+nySession = (hour(time, "GMT") >= 13 and hour(time, "GMT") < 22)
 
 // Biến theo dõi phiên Á
 var bool wasAsianSession = false

@@ -20,13 +20,13 @@ nyColor = input.color(color.new(color.orange, 90), "Màu phiên Mỹ", group="Fo
 
 // === FOREX SESSION LOGIC ===
 // Định nghĩa thời gian các phiên Forex (GMT)
-// Phiên Á (Tokyo): 00:00 - 09:00 GMT
-// Phiên London: 08:00 - 17:00 GMT
-// Phiên Mỹ (New York): 13:00 - 22:00 GMT
+// Phiên Á (Tokyo/Sydney): 23:00 (hôm trước) - 08:00 GMT
+// Phiên London (Châu Âu): 07:00 - 16:00 GMT
+// Phiên Mỹ (New York): 12:00 - 21:00 GMT
 
-asianSession = (hour(time, "GMT") >= 0 and hour(time, "GMT") < 9)
-londonSession = (hour(time, "GMT") >= 8 and hour(time, "GMT") < 17)
-nySession = (hour(time, "GMT") >= 13 and hour(time, "GMT") < 22)
+asianSession = (hour(time, "GMT") >= 23 or hour(time, "GMT") < 8)
+londonSession = (hour(time, "GMT") >= 7 and hour(time, "GMT") < 16)
+nySession = (hour(time, "GMT") >= 12 and hour(time, "GMT") < 21)
 
 // Biến theo dõi phiên Á
 var bool wasAsianSession = false
@@ -59,12 +59,7 @@ if showForexSessions and showAsianSession
         asianLow := math.min(asianLow, low)
     else if not asianSession and wasAsianSession
         // Phiên vừa kết thúc, vẽ box
-        box.new(asianStartBar, asianHigh, bar_index, asianLow,
-                border_color=color.new(color.yellow, 50),
-                bgcolor=asianColor,
-                text="Asian",
-                text_color=color.new(color.yellow, 0),
-                text_size=size.small)
+        box.new(asianStartBar, asianHigh, bar_index, asianLow, border_color=color.new(color.yellow, 50), bgcolor=asianColor, text="Asian", text_color=color.new(color.yellow, 0), text_size=size.small)
     wasAsianSession := asianSession
 
 // Logic cho phiên London
@@ -80,12 +75,7 @@ if showForexSessions and showLondonSession
         londonLow := math.min(londonLow, low)
     else if not londonSession and wasLondonSession
         // Phiên vừa kết thúc, vẽ box
-        box.new(londonStartBar, londonHigh, bar_index, londonLow,
-                border_color=color.new(color.blue, 50),
-                bgcolor=londonColor,
-                text="London",
-                text_color=color.new(color.blue, 0),
-                text_size=size.small)
+        box.new(londonStartBar, londonHigh, bar_index, londonLow, border_color=color.new(color.blue, 50), bgcolor=londonColor, text="London", text_color=color.new(color.blue, 0), text_size=size.small)
     wasLondonSession := londonSession
 
 // Logic cho phiên Mỹ
@@ -101,12 +91,7 @@ if showForexSessions and showNYSession
         nyLow := math.min(nyLow, low)
     else if not nySession and wasNYSession
         // Phiên vừa kết thúc, vẽ box
-        box.new(nyStartBar, nyHigh, bar_index, nyLow,
-                border_color=color.new(color.orange, 50),
-                bgcolor=nyColor,
-                text="NY",
-                text_color=color.new(color.orange, 0),
-                text_size=size.small)
+        box.new(nyStartBar, nyHigh, bar_index, nyLow, border_color=color.new(color.orange, 50), bgcolor=nyColor, text="NY", text_color=color.new(color.orange, 0), text_size=size.small)
     wasNYSession := nySession
 
 // === PHÁT HIỆN ĐỈNH/ĐÁY ===

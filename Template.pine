@@ -51,6 +51,9 @@ EQUAL_GROUP                     = 'EQH/EQL'
 GAPS_GROUP                      = 'Fair Value Gaps'
 LEVELS_GROUP                    = 'Highs & Lows MTF'
 ZONES_GROUP                     = 'Premium & Discount Zones'
+VOLUME_GROUP                    = 'Volume Settings'
+REGIME_GROUP                    = 'Market Regime'
+MTF_GROUP                       = 'Multi-Timeframe'
 
 modeTooltip                     = 'Allows to display historical Structure or only the recent ones'
 styleTooltip                    = 'Indicator color theme'
@@ -132,6 +135,36 @@ showPremiumDiscountZonesInput   = input(        false,      'Premium/Discount Zo
 premiumZoneColorInput           = input.color(  RED,        'Premium Zone',             group = ZONES_GROUP)
 equilibriumZoneColorInput       = input.color(  GRAY,       'Equilibrium Zone',         group = ZONES_GROUP)
 discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',            group = ZONES_GROUP)
+
+// Volume Confirmation Settings
+showVolumeFilterInput           = input(        true,       'Volume Confirmation',      group = VOLUME_GROUP, tooltip = 'Filter signals based on volume')
+volumeMultiplierInput           = input.float(  1.5,        'Volume Multiplier',        group = VOLUME_GROUP, minval = 1.0, maxval = 3.0, step = 0.1)
+volumePeriodInput               = input.int(    20,         'Volume MA Period',         group = VOLUME_GROUP, minval = 10, maxval = 50)
+
+// Market Regime Settings
+useRegimeFilterInput            = input(        false,      'Use Regime Filter',        group = REGIME_GROUP, tooltip = 'Filter signals based on market regime')
+adxPeriodInput                  = input.int(    14,         'ADX Period',               group = REGIME_GROUP, minval = 7, maxval = 50)
+adxThresholdInput               = input.float(  25.0,       'ADX Threshold',            group = REGIME_GROUP, minval = 15.0, maxval = 40.0, step = 1.0)
+
+// Multi-Timeframe Settings
+useMTFConfirmInput              = input(        false,      'MTF Confirmation',         group = MTF_GROUP, tooltip = 'Require higher timeframe trend alignment')
+htfTimeframeInput               = input.timeframe('240',    'Higher Timeframe',         group = MTF_GROUP)
+
+// Confirmation Bars for BOS/CHoCH
+confirmationBarsInput           = input.int(    1,          'Confirmation Bars',        group = SWING_GROUP, minval = 1, maxval = 5, tooltip = 'Bars to confirm breakout (1 = original behavior)')
+
+// Order Block Scoring
+minOBScoreInput                 = input.float(  0,          'Min OB Score',             group = BLOCKS_GROUP, minval = 0, maxval = 100, step = 5, tooltip = 'Minimum score for Order Blocks (0 = no filter)')
+
+// Improved Pivot Detection
+minSwingDepthInput              = input.float(  0,          'Min Swing Depth (ATR)',    group = SWING_GROUP, minval = 0, maxval = 5.0, step = 0.1, tooltip = 'Minimum swing depth in ATR (0 = original behavior)')
+
+// FVG Strength Filter
+minFVGStrengthInput             = input.float(  0,          'Min FVG Strength',         group = GAPS_GROUP, minval = 0, maxval = 100, step = 5, tooltip = 'Minimum FVG strength score (0 = no filter)')
+
+// Equal Highs/Lows Touch Count Display
+showEQLTouchCountInput          = input(        false,      'Show Touch Count',         group = EQUAL_GROUP, tooltip = 'Display number of touches on EQH/EQL levels')
+touchLookbackInput              = input.int(    50,         'Touch Lookback',           group = EQUAL_GROUP, minval = 10, maxval = 200)
 
 //---------------------------------------------------------------------------------------------------------------------}
 //DATA STRUCTURES & VARIABLES
@@ -229,11 +262,28 @@ type pivot
 // @field barLow                    bar low
 // @field barTime                   bar time
 // @field bias                      BULLISH or BEARISH
+// @field score                     quality score (0-100)
 type orderBlock
     float barHigh
     float barLow
-    int barTime    
+    int barTime
     int bias
+    float score = 100.0
+
+// @type                            UDT representing Fair Value Gap with strength
+// @field top                       top price
+// @field bottom                    bottom price
+// @field bias                      BULLISH or BEARISH
+// @field strength                  strength score (0-100)
+// @field topBox                    top box
+// @field bottomBox                 bottom box
+type fairValueGapScored
+    float top
+    float bottom
+    int bias
+    float strength
+    box topBox
+    box bottomBox
 
 // @variable                        current swing pivot high    
 var pivot swingHigh                 = pivot.new(na,na,false)
@@ -298,6 +348,51 @@ alerts currentAlerts                = alerts.new()
 // @variable                        time at start of chart
 var initialTime                     = time
 
+// Volume Variables
+avgVolume                           = ta.sma(volume, volumePeriodInput)
+// @variable                        true if volume is above average * multiplier
+isHighVolume                        = volume > avgVolume * volumeMultiplierInput
+// @variable                        true if volume is above average
+isVolumeConfirmed                   = volume > avgVolume
+
+// Market Regime Variables (ADX-based)
+// @function                        Calculate ADX components
+dirmov(len) =>
+    upMove = ta.change(high)
+    downMove = -ta.change(low)
+    plusDM = na(upMove) ? na : (upMove > downMove and upMove > 0 ? upMove : 0)
+    minusDM = na(downMove) ? na : (downMove > upMove and downMove > 0 ? downMove : 0)
+    trueRange = ta.rma(ta.tr, len)
+    plus = fixnan(100 * ta.rma(plusDM, len) / trueRange)
+    minus = fixnan(100 * ta.rma(minusDM, len) / trueRange)
+    [plus, minus]
+
+[diPlus, diMinus] = dirmov(adxPeriodInput)
+adxValue = 100 * ta.rma(math.abs(diPlus - diMinus) / (diPlus + diMinus == 0 ? 1 : diPlus + diMinus), adxPeriodInput)
+
+// @function                        Get market regime: 1=uptrend, -1=downtrend, 0=ranging
+marketRegime() =>
+    if adxValue > adxThresholdInput
+        diPlus > diMinus ? 1 : -1
+    else
+        0
+
+currentRegime = marketRegime()
+
+// Multi-Timeframe Variables
+htfClose = request.security(syminfo.tickerid, htfTimeframeInput, close)
+htfOpen = request.security(syminfo.tickerid, htfTimeframeInput, open)
+htfTrend = htfClose > htfOpen ? 1 : htfClose < htfOpen ? -1 : 0
+
+// @function                        Get MTF alignment score (0-2)
+mtfAlignment(int bias) =>
+    score = 0
+    if htfTrend == bias
+        score += 1
+    if currentRegime == bias or currentRegime == 0
+        score += 1
+    score
+
 // we create the needed boxes for displaying order blocks at the first execution
 if barstate.isfirst
     if showSwingOrderBlocksInput
@@ -332,16 +427,167 @@ times.push(time)
 //---------------------------------------------------------------------------------------------------------------------}
 //USER-DEFINED FUNCTIONS
 //---------------------------------------------------------------------------------------------------------------------{
+
+// ============ VOLUME CONFIRMATION FUNCTIONS ============
+// @function            Check if current bar has high volume (above avg * multiplier)
+// @returns             bool
+isHighVolumeBar() => showVolumeFilterInput ? isHighVolume : true
+
+// @function            Check if volume is confirmed (above average)
+// @returns             bool
+isVolumeConfirmedBar() => showVolumeFilterInput ? isVolumeConfirmed : true
+
+// ============ MULTI-CANDLE CONFIRMATION FUNCTIONS ============
+// @function            Check if breakout is confirmed over multiple bars
+// @param level         Price level to check
+// @param bullish       true for bullish breakout (close > level)
+// @param bars          Number of bars to confirm
+// @returns             bool
+isConfirmedBreakout(float level, bool bullish, int bars) =>
+    if bars <= 1
+        bullish ? close > level : close < level
+    else
+        confirmed = true
+        for i = 0 to bars - 1
+            if bullish
+                if close[i] <= level
+                    confirmed := false
+                    break
+            else
+                if close[i] >= level
+                    confirmed := false
+                    break
+        confirmed
+
+// ============ ORDER BLOCK SCORING FUNCTIONS ============
+// @function            Calculate Order Block quality score
+// @param idx           Bar index of the Order Block
+// @param bias          BULLISH or BEARISH
+// @returns             float (0-100)
+calcOBScore(int idx, int bias) =>
+    // Volume Score (0-30): Higher volume = higher score
+    volRatio = nz(volume[bar_index - idx] / avgVolume, 1.0)
+    volumeScore = math.min(30.0, volRatio * 15.0)
+
+    // Body Ratio Score (0-20): Larger body relative to range = stronger OB
+    barRange = high[bar_index - idx] - low[bar_index - idx]
+    bodySize = math.abs(close[bar_index - idx] - open[bar_index - idx])
+    bodyRatio = barRange > 0 ? bodySize / barRange : 0
+    bodyScore = bodyRatio * 20.0
+
+    // Trend Alignment Score (0-25): OB aligned with regime
+    trendScore = 0.0
+    if useRegimeFilterInput
+        if (bias == BULLISH and currentRegime >= 0) or (bias == BEARISH and currentRegime <= 0)
+            trendScore := 25.0
+        else if currentRegime == 0
+            trendScore := 15.0
+    else
+        trendScore := 25.0
+
+    // Imbalance/FVG Proximity Score (0-25): Check if there's an FVG nearby
+    imbalanceScore = 0.0
+    lookbackBars = math.min(5, bar_index - idx)
+    for i = 0 to lookbackBars
+        checkIdx = bar_index - idx - i
+        if checkIdx >= 2
+            // Check for bullish FVG pattern
+            if low[checkIdx] > high[checkIdx + 2]
+                imbalanceScore := 25.0
+                break
+            // Check for bearish FVG pattern
+            if high[checkIdx] < low[checkIdx + 2]
+                imbalanceScore := 25.0
+                break
+
+    math.round(volumeScore + bodyScore + trendScore + imbalanceScore, 1)
+
+// ============ ADAPTIVE FVG FUNCTIONS ============
+// @function            Calculate adaptive FVG threshold based on recent volatility
+// @returns             float
+adaptiveFVGThreshold() =>
+    recentVolatility = ta.stdev(close, 20) / ta.sma(close, 20) * 100
+    baseThreshold = 0.1
+    // Higher volatility = higher threshold
+    baseThreshold * (1 + recentVolatility / 2)
+
+// @function            Calculate FVG strength score
+// @param gapSize       Size of the gap
+// @param bias          BULLISH or BEARISH
+// @returns             float (0-100)
+calcFVGStrength(float gapSize, int bias) =>
+    // Size Score (0-40): Larger gap relative to ATR = stronger
+    sizeRatio = gapSize / atrMeasure
+    sizeScore = math.min(40.0, sizeRatio * 40.0)
+
+    // Volume Score (0-30): Higher volume = stronger FVG
+    volRatio = volume / avgVolume
+    volumeScore = math.min(30.0, volRatio * 15.0)
+
+    // Trend Alignment Score (0-30)
+    trendScore = 0.0
+    if useRegimeFilterInput
+        if (bias == BULLISH and currentRegime >= 0) or (bias == BEARISH and currentRegime <= 0)
+            trendScore := 30.0
+        else if currentRegime == 0
+            trendScore := 15.0
+    else
+        trendScore := 30.0
+
+    math.round(sizeScore + volumeScore + trendScore, 1)
+
+// ============ TOUCH COUNT FUNCTIONS ============
+// @function            Count how many times price touched a level
+// @param level         Price level to check
+// @param lookback      Number of bars to look back
+// @param tolerance     Tolerance as ATR multiplier
+// @returns             int
+countTouches(float level, int lookback, float tolerance) =>
+    touches = 0
+    tolerancePrice = atrMeasure * tolerance
+    for i = 1 to lookback
+        // Check if price came close to level
+        if math.abs(high[i] - level) <= tolerancePrice or math.abs(low[i] - level) <= tolerancePrice
+            touches += 1
+    touches
+
+// ============ SWING DEPTH FUNCTION ============
+// @function            Calculate swing depth in ATR units
+// @param swingPrice    Swing high or low price
+// @param isHigh        true for swing high, false for swing low
+// @param lookback      Number of bars to check
+// @returns             float
+calcSwingDepth(float swingPrice, bool isHigh, int lookback) =>
+    if isHigh
+        lowestAfter = ta.lowest(low, lookback)
+        (swingPrice - lowestAfter) / atrMeasure
+    else
+        highestAfter = ta.highest(high, lookback)
+        (highestAfter - swingPrice) / atrMeasure
+
 // @function            Get the value of the current leg, it can be 0 (bearish) or 1 (bullish)
+// @param size          Number of bars for swing detection
 // @returns             int
 leg(int size) =>
-    var leg     = 0    
-    newLegHigh  = high[size] > ta.highest( size)
-    newLegLow   = low[size]  < ta.lowest(  size)
-    
-    if newLegHigh
+    var leg     = 0
+    newLegHigh  = high[size] > ta.highest(size)
+    newLegLow   = low[size]  < ta.lowest(size)
+
+    // Enhanced: Check swing depth if enabled
+    swingDepthOk = true
+    if minSwingDepthInput > 0
+        if newLegHigh
+            // For swing high, check depth to the lowest point after
+            swingDepth = calcSwingDepth(high[size], true, size)
+            swingDepthOk := swingDepth >= minSwingDepthInput
+        else if newLegLow
+            // For swing low, check depth to the highest point after
+            swingDepth = calcSwingDepth(low[size], false, size)
+            swingDepthOk := swingDepth >= minSwingDepthInput
+
+    if newLegHigh and swingDepthOk
         leg := BEARISH_LEG
-    else if newLegLow
+    else if newLegLow and swingDepthOk
         leg := BULLISH_LEG
     leg
 
@@ -383,7 +629,7 @@ drawLabel(int labelTime, float labelPrice, string tag, color labelColor, string 
 // @returns             label ID
 drawEqualHighLow(pivot p_ivot, float level, int size, bool equalHigh) =>
     equalDisplay e_qualDisplay = equalHigh ? equalHighDisplay : equalLowDisplay
-    
+
     string tag          = 'EQL'
     color equalColor    = swingBullishColor
     string labelStyle   = label.style_label_up
@@ -393,10 +639,16 @@ drawEqualHighLow(pivot p_ivot, float level, int size, bool equalHigh) =>
         equalColor  := swingBearishColor
         labelStyle  := label.style_label_down
 
+    // Enhanced: Add touch count to label if enabled
+    if showEQLTouchCountInput
+        avgLevel = math.avg(p_ivot.currentLevel, level)
+        touches = countTouches(avgLevel, touchLookbackInput, equalHighsLowsThresholdInput)
+        tag := tag + ' (' + str.tostring(touches) + ')'
+
     if modeInput == PRESENT
         line.delete(    e_qualDisplay.l_ine)
         label.delete(   e_qualDisplay.l_abel)
-        
+
     e_qualDisplay.l_ine     := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel), chart.point.new(time[size],na,level), xloc = xloc.bar_time, color = equalColor, style = line.style_dotted)
     labelPosition           = math.round(0.5*(p_ivot.barIndex + bar_index - size))
     e_qualDisplay.l_abel    := label.new(chart.point.new(na,labelPosition,level), tag, xloc.bar_index, color = color(na), textcolor = equalColor, style = labelStyle, size = equalHighsLowsSizeInput)
@@ -512,17 +764,27 @@ storeOrdeBlock(pivot p_ivot,bool internal = false,int bias) =>
 
         if bias == BEARISH
             a_rray      := parsedHighs.slice(p_ivot.barIndex,bar_index)
-            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.max())  
+            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.max())
         else
             a_rray      := parsedLows.slice(p_ivot.barIndex,bar_index)
-            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.min())                        
+            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.min())
 
-        orderBlock o_rderBlock          = orderBlock.new(parsedHighs.get(parsedIndex), parsedLows.get(parsedIndex), times.get(parsedIndex),bias)
-        array<orderBlock> orderBlocks   = internal ? internalOrderBlocks : swingOrderBlocks
-        
-        if orderBlocks.size() >= 100
-            orderBlocks.pop()
-        orderBlocks.unshift(o_rderBlock)
+        // Enhanced: Calculate OB score
+        obScore = calcOBScore(parsedIndex, bias)
+
+        // Enhanced: Check if volume is high enough for OB creation
+        volumeOkForOB = showVolumeFilterInput ? isHighVolumeBar() : true
+
+        // Enhanced: Filter OB by minimum score
+        scoreOk = obScore >= minOBScoreInput
+
+        if volumeOkForOB and scoreOk
+            orderBlock o_rderBlock          = orderBlock.new(parsedHighs.get(parsedIndex), parsedLows.get(parsedIndex), times.get(parsedIndex), bias, obScore)
+            array<orderBlock> orderBlocks   = internal ? internalOrderBlocks : swingOrderBlocks
+
+            if orderBlocks.size() >= 100
+                orderBlocks.pop()
+            orderBlocks.unshift(o_rderBlock)
 
 // @function            draw order blocks as boxes
 // @param internal      true for internal order blocks
@@ -555,7 +817,7 @@ displayStructure(bool internal = false) =>
     if internalFilterConfluenceInput
         bullishBar := high - math.max(close, open) > math.min(close, open - low)
         bearishBar := high - math.max(close, open) < math.min(close, open - low)
-    
+
     pivot p_ivot    = internal ? internalHigh : swingHigh
     trend t_rend    = internal ? internalTrend : swingTrend
 
@@ -565,7 +827,22 @@ displayStructure(bool internal = false) =>
     extraCondition  = internal ? internalHigh.currentLevel != swingHigh.currentLevel and bullishBar : true
     bullishColor    = styleInput == MONOCHROME ? MONO_BULLISH : internal ? internalBullColorInput : swingBullColorInput
 
-    if ta.crossover(close,p_ivot.currentLevel) and not p_ivot.crossed and extraCondition
+    // Enhanced: Multi-candle confirmation for bullish breakout
+    bullishBreakoutConfirmed = isConfirmedBreakout(p_ivot.currentLevel, true, confirmationBarsInput)
+
+    // Enhanced: Volume confirmation for BOS/CHoCH
+    volumeOk = isVolumeConfirmedBar()
+
+    // Enhanced: MTF alignment check (optional)
+    mtfOk = useMTFConfirmInput ? mtfAlignment(BULLISH) >= 1 : true
+
+    // Enhanced: Market regime filter (optional) - BOS favored in trending, CHoCH in ranging
+    regimeOk = true
+    if useRegimeFilterInput and currentRegime != 0
+        // In strong trend, favor BOS over CHoCH for counter-trend
+        regimeOk := currentRegime == BULLISH or t_rend.bias == BEARISH // Allow CHoCH in downtrend
+
+    if bullishBreakoutConfirmed and not p_ivot.crossed and extraCondition and volumeOk and mtfOk
         string tag = t_rend.bias == BEARISH ? CHOCH : BOS
 
         if internal
@@ -580,17 +857,23 @@ displayStructure(bool internal = false) =>
 
         displayCondition = internal ? showInternalsInput and (showInternalBullInput == ALL or (showInternalBullInput == BOS and tag != CHOCH) or (showInternalBullInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBullInput == ALL or (showSwingBullInput == BOS and tag != CHOCH) or (showSwingBullInput == CHOCH and tag == CHOCH))
 
-        if displayCondition                        
+        if displayCondition
             drawStructure(p_ivot,tag,bullishColor,lineStyle,label.style_label_down,labelSize)
 
         if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
             storeOrdeBlock(p_ivot,internal,BULLISH)
 
-    p_ivot          := internal ? internalLow : swingLow    
+    p_ivot          := internal ? internalLow : swingLow
     extraCondition  := internal ? internalLow.currentLevel != swingLow.currentLevel and bearishBar : true
     bearishColor    = styleInput == MONOCHROME ? MONO_BEARISH : internal ? internalBearColorInput : swingBearColorInput
 
-    if ta.crossunder(close,p_ivot.currentLevel) and not p_ivot.crossed and extraCondition
+    // Enhanced: Multi-candle confirmation for bearish breakout
+    bearishBreakoutConfirmed = isConfirmedBreakout(p_ivot.currentLevel, false, confirmationBarsInput)
+
+    // Enhanced: MTF alignment check for bearish
+    mtfOkBear = useMTFConfirmInput ? mtfAlignment(BEARISH) >= 1 : true
+
+    if bearishBreakoutConfirmed and not p_ivot.crossed and extraCondition and volumeOk and mtfOkBear
         string tag = t_rend.bias == BULLISH ? CHOCH : BOS
 
         if internal
@@ -604,8 +887,8 @@ displayStructure(bool internal = false) =>
         t_rend.bias := BEARISH
 
         displayCondition = internal ? showInternalsInput and (showInternalBearInput == ALL or (showInternalBearInput == BOS and tag != CHOCH) or (showInternalBearInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBearInput == ALL or (showSwingBearInput == BOS and tag != CHOCH) or (showSwingBearInput == CHOCH and tag == CHOCH))
-        
-        if displayCondition                        
+
+        if displayCondition
             drawStructure(p_ivot,tag,bearishColor,lineStyle,label.style_label_up,labelSize)
 
         if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
@@ -631,22 +914,37 @@ deleteFairValueGaps() =>
     
 // @function            draw fair value gaps
 // @returns             fairValueGap ID
-drawFairValueGaps() => 
+drawFairValueGaps() =>
     [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[0], low[0], time[0], high[2], low[2]],lookahead = barmerge.lookahead_on)
 
     barDeltaPercent     = (lastClose - lastOpen) / (lastOpen * 100)
     newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
-    threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
+
+    // Enhanced: Use adaptive threshold based on recent volatility
+    baseThreshold       = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
+    adaptiveThresh      = adaptiveFVGThreshold()
+    threshold           = math.max(baseThreshold, adaptiveThresh * 0.5)
 
     bullishFairValueGap = currentLow > last2High and lastClose > last2High and barDeltaPercent > threshold and newTimeframe
     bearishFairValueGap = currentHigh < last2Low and lastClose < last2Low and -barDeltaPercent > threshold and newTimeframe
 
+    // Enhanced: Calculate FVG gap size for strength scoring
+    bullishGapSize = currentLow - last2High
+    bearishGapSize = last2Low - currentHigh
+
     if bullishFairValueGap
-        currentAlerts.bullishFairValueGap := true
-        fairValueGaps.unshift(fairValueGap.new(currentLow,last2High,BULLISH,fairValueGapBox(lastTime,currentTime,currentLow,math.avg(currentLow,last2High),fairValueGapBullishColor),fairValueGapBox(lastTime,currentTime,math.avg(currentLow,last2High),last2High,fairValueGapBullishColor)))
+        // Enhanced: Calculate and check FVG strength
+        fvgStrength = calcFVGStrength(bullishGapSize, BULLISH)
+        if fvgStrength >= minFVGStrengthInput
+            currentAlerts.bullishFairValueGap := true
+            fairValueGaps.unshift(fairValueGap.new(currentLow,last2High,BULLISH,fairValueGapBox(lastTime,currentTime,currentLow,math.avg(currentLow,last2High),fairValueGapBullishColor),fairValueGapBox(lastTime,currentTime,math.avg(currentLow,last2High),last2High,fairValueGapBullishColor)))
+
     if bearishFairValueGap
-        currentAlerts.bearishFairValueGap := true
-        fairValueGaps.unshift(fairValueGap.new(currentHigh,last2Low,BEARISH,fairValueGapBox(lastTime,currentTime,currentHigh,math.avg(currentHigh,last2Low),fairValueGapBearishColor),fairValueGapBox(lastTime,currentTime,math.avg(currentHigh,last2Low),last2Low,fairValueGapBearishColor)))
+        // Enhanced: Calculate and check FVG strength
+        fvgStrength = calcFVGStrength(bearishGapSize, BEARISH)
+        if fvgStrength >= minFVGStrengthInput
+            currentAlerts.bearishFairValueGap := true
+            fairValueGaps.unshift(fairValueGap.new(currentHigh,last2Low,BEARISH,fairValueGapBox(lastTime,currentTime,currentHigh,math.avg(currentHigh,last2Low),fairValueGapBearishColor),fairValueGapBox(lastTime,currentTime,math.avg(currentHigh,last2Low),last2Low,fairValueGapBearishColor)))
 
 // @function            get line style from string
 // @param style         line style
@@ -844,5 +1142,14 @@ alertcondition(currentAlerts.equalLows,                 'Equal Lows',           
 
 alertcondition(currentAlerts.bullishFairValueGap,       'Bullish FVG',                  'Bullish FVG formed')
 alertcondition(currentAlerts.bearishFairValueGap,       'Bearish FVG',                  'Bearish FVG formed')
+
+// Enhanced: Additional alerts for optimized features
+alertcondition(currentAlerts.swingBullishBOS and isHighVolume, 'High Volume Bullish BOS', 'Bullish BOS with high volume')
+alertcondition(currentAlerts.swingBearishBOS and isHighVolume, 'High Volume Bearish BOS', 'Bearish BOS with high volume')
+alertcondition(currentAlerts.swingBullishCHoCH and isHighVolume, 'High Volume Bullish CHoCH', 'Bullish CHoCH with high volume')
+alertcondition(currentAlerts.swingBearishCHoCH and isHighVolume, 'High Volume Bearish CHoCH', 'Bearish CHoCH with high volume')
+alertcondition(currentRegime == 1, 'Strong Uptrend', 'Market entered strong uptrend')
+alertcondition(currentRegime == -1, 'Strong Downtrend', 'Market entered strong downtrend')
+alertcondition(currentRegime == 0 and currentRegime[1] != 0, 'Ranging Market', 'Market entered ranging/sideways phase')
 
 //---------------------------------------------------------------------------------------------------------------------}

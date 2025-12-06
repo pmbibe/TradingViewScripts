@@ -465,28 +465,14 @@ plotcandle(open, high, low, close, "Price Candles", candle_col, candle_col_, bor
 if bearish_sweep
     vol_status = has_volume_confirmation ? "Confirmed" : "Low"
     htf_status = use_mtf ? (htf_trend == -1 ? "Aligned" : "Divergent") : "Off"
-    alert_msg = "BEARISH CISD DETECTED | " +
-                "Price: " + str.tostring(close, format.mintick) + " | " +
-                "SL: " + str.tostring(sl_level, format.mintick) + " | " +
-                "TP: " + str.tostring(tp_level, format.mintick) + " | " +
-                "Strength: " + str.tostring(signal_strength) + "% | " +
-                "Volume: " + vol_status + " | " +
-                "HTF: " + htf_status + " | " +
-                "R:R 1:" + str.tostring(risk_reward)
+    alert_msg = "BEARISH CISD | Price: " + str.tostring(close, format.mintick) + " | SL: " + str.tostring(sl_level, format.mintick) + " | TP: " + str.tostring(tp_level, format.mintick) + " | Strength: " + str.tostring(signal_strength) + "% | Volume: " + vol_status + " | HTF: " + htf_status + " | R:R 1:" + str.tostring(risk_reward)
     alert(alert_msg, alert.freq_once_per_bar_close)
 
 // Bullish alert with details
 if bullish_sweep
     vol_status = has_volume_confirmation ? "Confirmed" : "Low"
     htf_status = use_mtf ? (htf_trend == 1 ? "Aligned" : "Divergent") : "Off"
-    alert_msg = "BULLISH CISD DETECTED | " +
-                "Price: " + str.tostring(close, format.mintick) + " | " +
-                "SL: " + str.tostring(sl_level, format.mintick) + " | " +
-                "TP: " + str.tostring(tp_level, format.mintick) + " | " +
-                "Strength: " + str.tostring(signal_strength) + "% | " +
-                "Volume: " + vol_status + " | " +
-                "HTF: " + htf_status + " | " +
-                "R:R 1:" + str.tostring(risk_reward)
+    alert_msg = "BULLISH CISD | Price: " + str.tostring(close, format.mintick) + " | SL: " + str.tostring(sl_level, format.mintick) + " | TP: " + str.tostring(tp_level, format.mintick) + " | Strength: " + str.tostring(signal_strength) + "% | Volume: " + vol_status + " | HTF: " + htf_status + " | R:R 1:" + str.tostring(risk_reward)
     alert(alert_msg, alert.freq_once_per_bar_close)
 
 // Basic alerts (for backward compatibility)
@@ -494,5 +480,5 @@ alertcondition(wicked_high, "Swing High Mitigation", "Swing High Mitigated")
 alertcondition(wicked_low, "Swing Low Mitigation", "Swing Low Mitigated")
 alertcondition(cisd == 1, "Bearish Normal CISD", "Bearish Normal CISD Detected")
 alertcondition(cisd == 2, "Bullish Normal CISD", "Bullish Normal CISD Detected")
-alertcondition(bearish_sweep, "Strong Bearish CISD", "Strong Bearish CISD with " + str.tostring(signal_strength) + "% strength")
-alertcondition(bullish_sweep, "Strong Bullish CISD", "Strong Bullish CISD with " + str.tostring(signal_strength) + "% strength")
+alertcondition(bearish_sweep, "Strong Bearish CISD", "Strong Bearish CISD Detected - Check chart for details")
+alertcondition(bullish_sweep, "Strong Bullish CISD", "Strong Bullish CISD Detected - Check chart for details")

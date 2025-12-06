@@ -22,6 +22,8 @@ GROUP_ST = "==== Supertrend ======================="
 GROUP_VOL = "==== Volume ==========================="
 GROUP_FILTERS = "==== Quality Filters ================="
 GROUP_PREDICTION = "==== Trend Duration Prediction====="
+GROUP_MTF = "==== Multi-Timeframe Filter =========="
+GROUP_RISK = "==== Risk Management ================="
 
 // Auto-detect trading style from chart timeframe
 detect_trading_style() =>
@@ -149,6 +151,25 @@ const string errorLearningInfo = "Error Learning System\n\nAdaptively learns fro
 i_use_error_learning = input.bool(true, "Enable Error Learning", group=GROUP_PREDICTION, inline="learn1", tooltip=errorLearningInfo)
 i_error_memory_depth = input.int(10, "Memory Depth", minval=3, maxval=20, group=GROUP_PREDICTION, inline="learn1")
 
+// ========== MULTI-TIMEFRAME FILTER ==========
+const string mtfInfo = "Multi-Timeframe Confirmation Filter\n\nFilters signals based on Higher Timeframe trend direction.\n\nHOW IT WORKS:\n✅ LONG signals only when HTF is bullish\n✅ SHORT signals only when HTF is bearish\n✅ Bonus quality points (+15) when aligned\n\nBENEFITS:\n• Trade with the major trend\n• Reduce counter-trend losses\n• Improve win rate significantly\n\nRECOMMENDED HTF by trading style:\n• Scalping (1-5m): Use 15m or 1H\n• Day Trading (15m-1H): Use 4H or D\n• Swing (4H-D): Use D or W\n• Position (D-W): Use W or M\n\n⚠️ Signals may be less frequent but higher quality"
+
+enable_mtf_filter = input.bool(true, "Enable MTF Filter", group=GROUP_MTF, tooltip=mtfInfo)
+htf_timeframe = input.timeframe("D", "Higher Timeframe", group=GROUP_MTF, tooltip="Higher Timeframe for trend confirmation\n\nRecommended:\n• Scalping: 15m or 1H\n• Day Trading: 4H or D\n• Swing: D or W\n• Position: W or M\n\nRule of thumb: 4-6x your chart timeframe")
+mtf_bonus_points = input.int(15, "MTF Alignment Bonus Points", minval=0, maxval=30, group=GROUP_MTF, tooltip="Bonus quality points when current timeframe aligns with HTF trend\n\nDefault: 15 points\nMax quality score increases from 70 to 85\n\n💡 Higher bonus = stronger preference for aligned signals")
+
+// ========== RISK MANAGEMENT ==========
+const string riskInfo = "Risk Management System\n\nComplete risk control toolkit:\n\n🛡️ STOP LOSS:\n• ATR-based dynamic positioning\n• Adapts to market volatility\n• Default: 2.0x ATR from entry\n\n🎯 TAKE PROFIT:\n• Multiple targets (TP1, TP2, TP3)\n• Risk-reward ratios (1.5R, 2.5R, 4R)\n• Scale out strategy support\n\n📊 POSITION SIZING:\n• % risk-based calculation\n• Automatic share quantity\n• Default: 2% account risk per trade\n\n🔄 TRAILING STOP:\n• ATR-based dynamic trailing\n• Locks in profits automatically\n• Default: 1.5x ATR trail distance\n\nDISPLAY:\n• Lines for SL/TP levels\n• Labels with prices and R multiples\n• Risk/Reward ratios shown"
+
+enable_risk_management = input.bool(true, "Enable Risk Management", group=GROUP_RISK, tooltip=riskInfo)
+account_size = input.float(10000, "Account Size ($)", minval=100, group=GROUP_RISK, tooltip="Your total account value in dollars\n\nUsed for position sizing calculation\n\nExample:\n• Account: $10,000\n• Risk: 2%\n• Max loss per trade: $200")
+risk_percent = input.float(2.0, "Risk Per Trade (%)", minval=0.1, maxval=10.0, step=0.1, group=GROUP_RISK, tooltip="Percentage of account to risk per trade\n\nConservative: 0.5-1%\nBalanced: 1-2%\nAggressive: 2-5%\n\n⚠️ Never risk more than you can afford to lose!")
+sl_atr_mult = input.float(2.0, "Stop Loss (ATR Multiplier)", minval=0.5, maxval=5.0, step=0.5, group=GROUP_RISK, tooltip="Stop Loss distance from entry\n\nMeasured in ATR multiples:\n• 1.0x = Tight (higher risk of stop-out)\n• 2.0x = Balanced (recommended)\n• 3.0x = Wide (more breathing room)\n\nATR adapts to volatility automatically")
+tp1_ratio = input.float(1.5, "TP1 Ratio (R)", minval=0.5, maxval=5.0, step=0.5, group=GROUP_RISK, inline="tp1", tooltip="First take profit as risk multiple\n\n1.5R = 1.5x your risk\n\nExample:\n• Risk: $100 (to SL)\n• TP1: $150 profit\n• Total: +$150 gain")
+tp2_ratio = input.float(2.5, "TP2 Ratio (R)", minval=1.0, maxval=8.0, step=0.5, group=GROUP_RISK, inline="tp1")
+tp3_ratio = input.float(4.0, "TP3 Ratio (R)", minval=1.5, maxval=12.0, step=0.5, group=GROUP_RISK, inline="tp2")
+enable_trailing_stop = input.bool(true, "Enable Trailing Stop", group=GROUP_RISK, inline="trail", tooltip="Trailing Stop System\n\nDynamically follows price to lock in profits\n\nHOW IT WORKS:\n• Activates after TP1 is hit\n• Trails price by ATR distance\n• Never moves backwards (only up for long, down for short)\n• Exit when price hits trail level\n\n✅ Protects profits\n✅ Lets winners run")
+trailing_atr_mult = input.float(1.5, "Trailing Distance (ATR)", minval=0.5, maxval=3.0, step=0.5, group=GROUP_RISK, inline="trail")
 
 //======================================================
 //========= SECTION 3: SUPERTREND (BIAS STYLE) =========
@@ -236,6 +257,27 @@ vol_momentum_confirms_bear = is_bearish and vol_momentum_rising
 vol_momentum_strong_trend = (is_bullish and vol_momentum_strong) or (is_bearish and vol_momentum_strong)
 
 //======================================================
+//========== SECTION 3.7: MTF CONFIRMATION =============
+//======================================================
+
+// Request Higher Timeframe Supertrend direction
+// Using security function to get HTF trend WITHOUT lookahead bias
+[htf_direction, htf_supertrend_value] = request.security(syminfo.tickerid, htf_timeframe, [stDir, supertrend], lookahead=barmerge.lookahead_off)
+
+// HTF trend states
+htf_bullish = htf_direction == 1
+htf_bearish = htf_direction == -1
+
+// MTF Alignment checks
+mtf_aligned_long = is_bullish and htf_bullish   // Current TF bullish AND HTF bullish
+mtf_aligned_short = is_bearish and htf_bearish  // Current TF bearish AND HTF bearish
+mtf_aligned = mtf_aligned_long or mtf_aligned_short
+
+// MTF status string for dashboard
+mtf_status = htf_bullish ? "🟢 BULLISH" : "🔴 BEARISH"
+mtf_alignment_status = mtf_aligned ? "✅ ALIGNED" : "❌ MISALIGNED"
+
+//======================================================
 //=============== SECTION 4: VOLUME ANALYSIS ===========
 //======================================================
 
@@ -276,19 +318,179 @@ vol_stable = atr_ratio > 0.9 and atr_ratio < 1.0
 // Volatility State String
 volatility_state = atr_ratio >= 1.3 ? "🔥 EXPANDING" : vol_rising ? "📈 RISING" : vol_contracting ? "📉 CONTRACTING" : "➡️ STABLE"
 
+//======================================================
+//============ SECTION 6: RISK MANAGEMENT ==============
+//======================================================
+
+// Risk Management State Variables
+var float active_entry_price = na
+var float active_sl_price = na
+var float active_tp1_price = na
+var float active_tp2_price = na
+var float active_tp3_price = na
+var float active_trailing_stop = na
+var int active_direction = 0  // 1 = long, -1 = short, 0 = no position
+var float active_risk_amount = na
+var float active_position_size = na
+var bool tp1_hit = false
+var int active_entry_bar = na
+
+// Calculate Risk Levels on new signal
+if enable_risk_management and (goldenCross or deathCross) and barstate.isconfirmed
+    active_entry_price := close
+    active_direction := goldenCross ? 1 : -1
+    active_entry_bar := bar_index
+    tp1_hit := false
+
+    // Calculate Stop Loss (ATR-based)
+    float sl_distance = atr_current * sl_atr_mult
+    active_sl_price := active_direction == 1 ? active_entry_price - sl_distance : active_entry_price + sl_distance
+
+    // Risk amount (entry to SL distance)
+    active_risk_amount := math.abs(active_entry_price - active_sl_price)
+
+    // Calculate Take Profits (R multiples)
+    if active_direction == 1
+        active_tp1_price := active_entry_price + (active_risk_amount * tp1_ratio)
+        active_tp2_price := active_entry_price + (active_risk_amount * tp2_ratio)
+        active_tp3_price := active_entry_price + (active_risk_amount * tp3_ratio)
+    else
+        active_tp1_price := active_entry_price - (active_risk_amount * tp1_ratio)
+        active_tp2_price := active_entry_price - (active_risk_amount * tp2_ratio)
+        active_tp3_price := active_entry_price - (active_risk_amount * tp3_ratio)
+
+    // Position Sizing (% risk-based)
+    float account_risk_amount = account_size * (risk_percent / 100)
+    active_position_size := account_risk_amount / active_risk_amount
+
+    // Initialize trailing stop at SL
+    active_trailing_stop := active_sl_price
+
+// Update Trailing Stop (after TP1 hit)
+if enable_risk_management and enable_trailing_stop and not na(active_entry_price) and active_direction != 0
+    // Check if TP1 was hit
+    if active_direction == 1 and high >= active_tp1_price
+        tp1_hit := true
+    else if active_direction == -1 and low <= active_tp1_price
+        tp1_hit := true
+
+    // Trail stop if TP1 hit
+    if tp1_hit
+        float trail_distance = atr_current * trailing_atr_mult
+        if active_direction == 1
+            // Long: trail below price
+            float new_trail = close - trail_distance
+            active_trailing_stop := math.max(active_trailing_stop, new_trail)
+        else
+            // Short: trail above price
+            float new_trail = close + trail_distance
+            active_trailing_stop := math.min(active_trailing_stop, new_trail)
+
+// Reset position on opposite signal or stop hit
+if enable_risk_management and not na(active_entry_price) and active_direction != 0
+    bool stop_hit = false
+    bool opposite_signal = false
+
+    // Check stop loss / trailing stop hit
+    if enable_trailing_stop and tp1_hit
+        stop_hit := active_direction == 1 ? low <= active_trailing_stop : high >= active_trailing_stop
+    else
+        stop_hit := active_direction == 1 ? low <= active_sl_price : high >= active_sl_price
+
+    // Check opposite signal (trend flip)
+    opposite_signal := (active_direction == 1 and supertrend_flip_bearish) or (active_direction == -1 and supertrend_flip_bullish)
+
+    if stop_hit or opposite_signal
+        active_entry_price := na
+        active_direction := 0
+        active_entry_bar := na
+
+// Risk/Reward Ratios (for display)
+float rr_ratio_1 = enable_risk_management and not na(active_risk_amount) and active_risk_amount > 0 ? tp1_ratio : na
+float rr_ratio_2 = enable_risk_management and not na(active_risk_amount) and active_risk_amount > 0 ? tp2_ratio : na
+float rr_ratio_3 = enable_risk_management and not na(active_risk_amount) and active_risk_amount > 0 ? tp3_ratio : na
+
+//======================================================
+//========= SECTION 6.5: PERFORMANCE TRACKING ==========
+//======================================================
+
+// Performance Tracking Arrays (limit to 100 trades max)
+var array<float> trade_pnl_percent = array.new_float(0)
+var array<int> trade_bars_held = array.new_int(0)
+var int total_trades = 0
+var int winning_trades = 0
+var int losing_trades = 0
+var float total_profit_pct = 0.0
+var float total_loss_pct = 0.0
+var float peak_equity_pct = 0.0
+var float max_drawdown_pct = 0.0
+var float current_equity_pct = 0.0
+
+// Track when trade exits (opposite Supertrend flip)
+if enable_risk_management
+    // Detect trade exit: was in position, now opposite signal OR stop hit
+    bool was_long = active_direction[1] == 1 and active_direction == 0 and not na(active_entry_price[1])
+    bool was_short = active_direction[1] == -1 and active_direction == 0 and not na(active_entry_price[1])
+
+    if (was_long or was_short) and barstate.isconfirmed
+        // Calculate P&L %
+        float entry = active_entry_price[1]
+        float exit_price = close
+        int direction = was_long ? 1 : -1
+
+        // P&L as % of entry price
+        float pnl_pct = direction == 1 ? ((exit_price - entry) / entry * 100) : ((entry - exit_price) / entry * 100)
+
+        // Store trade
+        array.push(trade_pnl_percent, pnl_pct)
+        array.push(trade_bars_held, bar_index - active_entry_bar[1])
+
+        // Limit array size
+        if array.size(trade_pnl_percent) > 100
+            array.shift(trade_pnl_percent)
+            array.shift(trade_bars_held)
+
+        // Update counters
+        total_trades += 1
+        if pnl_pct > 0
+            winning_trades += 1
+            total_profit_pct += pnl_pct
+        else
+            losing_trades += 1
+            total_loss_pct += math.abs(pnl_pct)
+
+        // Update equity curve and drawdown
+        current_equity_pct += pnl_pct
+        peak_equity_pct := math.max(peak_equity_pct, current_equity_pct)
+        float current_dd = peak_equity_pct - current_equity_pct
+        max_drawdown_pct := math.max(max_drawdown_pct, current_dd)
+
+// Performance Metrics (calculated on-demand)
+float win_rate = total_trades > 0 ? (winning_trades / total_trades * 100) : 0
+float avg_win = winning_trades > 0 ? (total_profit_pct / winning_trades) : 0
+float avg_loss = losing_trades > 0 ? (total_loss_pct / losing_trades) : 0
+float profit_factor = total_loss_pct > 0 ? (total_profit_pct / total_loss_pct) : 0
+float expectancy = total_trades > 0 ? (current_equity_pct / total_trades) : 0
 
 //======================================================
 //============= SECTION 7: QUALITY SCORING =============
 //======================================================
 
-// Calculate Quality Score (0-70)
-// Based on: Volume (30) + Volatility (30) + Volume Momentum (10)
+// Calculate Quality Score (0-85 with MTF)
+// Based on: Volume (30) + Volatility (30) + Volume Momentum (10) + MTF Alignment (0-15)
 var int quality_score = 0
 
-quality_score := (vol_is_spike ? 30 : vol_is_high ? 20 : basic_volume_confirm ? 10 : 0) + (vol_expanding ? 30 : vol_rising ? 15 : 0) + (use_volume_momentum and vol_momentum_strong_trend ? 10 : use_volume_momentum and vol_momentum_rising ? 5 : 0)
+// Base score (0-70)
+int base_score = (vol_is_spike ? 30 : vol_is_high ? 20 : basic_volume_confirm ? 10 : 0) + (vol_expanding ? 30 : vol_rising ? 15 : 0) + (use_volume_momentum and vol_momentum_strong_trend ? 10 : use_volume_momentum and vol_momentum_rising ? 5 : 0)
 
-// Quality Level String
-quality_level = quality_score >= 60 ? "⭐⭐⭐ EXCELLENT" : quality_score >= 45 ? "⭐⭐ STRONG" : quality_score >= 30 ? "⭐ GOOD" : "⚠️ WEAK"
+// MTF bonus (0-15)
+int mtf_bonus = enable_mtf_filter and mtf_aligned ? mtf_bonus_points : 0
+
+// Total quality score
+quality_score := base_score + mtf_bonus
+
+// Quality Level String (updated thresholds for 0-85 scale)
+quality_level = quality_score >= 70 ? "⭐⭐⭐ EXCELLENT" : quality_score >= 50 ? "⭐⭐ STRONG" : quality_score >= 30 ? "⭐ GOOD" : "⚠️ WEAK"
 
 //======================================================
 //============ SECTION 8: SIGNAL GENERATION ============
@@ -308,11 +510,15 @@ volume_ok = not require_volume_confirm or basic_volume_confirm
 vol_momentum_ok_long = not use_volume_momentum or vol_momentum_confirms_bull
 vol_momentum_ok_short = not use_volume_momentum or vol_momentum_confirms_bear
 
+// Apply MTF Filter (if enabled)
+mtf_ok_long = not enable_mtf_filter or mtf_aligned_long
+mtf_ok_short = not enable_mtf_filter or mtf_aligned_short
+
 //======================================================
 //============= CLASSIC SIGNALS (ORIGINAL) =============
 //======================================================
-bool classic_long = supertrend_long and signal_quality_ok and volume_ok and vol_momentum_ok_long
-bool classic_short = supertrend_short and signal_quality_ok and volume_ok and vol_momentum_ok_short
+bool classic_long = supertrend_long and signal_quality_ok and volume_ok and vol_momentum_ok_long and mtf_ok_long
+bool classic_short = supertrend_short and signal_quality_ok and volume_ok and vol_momentum_ok_short and mtf_ok_short
 
 //======================================================
 //================ SCALPEL MODE LOGIC ==================
@@ -1606,6 +1812,51 @@ fill(p14, p15, ribbon_active ? c14 : na, editable=false)
 fill(p15, p16, ribbon_active ? c15 : na, editable=false)
 
 //======================================================
+//============ SECTION 11: RISK LEVEL PLOTS ============
+//======================================================
+
+// Plot Risk Management Lines (when position active)
+bool show_risk_lines = enable_risk_management and not na(active_entry_price) and active_direction != 0
+
+// Stop Loss Line
+plot(show_risk_lines ? active_sl_price : na, "Stop Loss", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+
+// Take Profit Lines
+plot(show_risk_lines ? active_tp1_price : na, "TP1", color=color.new(color.green, 0), linewidth=1, style=plot.style_linebr)
+plot(show_risk_lines ? active_tp2_price : na, "TP2", color=color.new(color.yellow, 0), linewidth=1, style=plot.style_linebr)
+plot(show_risk_lines ? active_tp3_price : na, "TP3", color=color.new(color.blue, 0), linewidth=1, style=plot.style_linebr)
+
+// Trailing Stop Line (when active)
+plot(show_risk_lines and enable_trailing_stop and tp1_hit ? active_trailing_stop : na, "Trailing Stop", color=color.new(color.orange, 0), linewidth=2, style=plot.style_linebr)
+
+// Entry Price Line (reference)
+plot(show_risk_lines ? active_entry_price : na, "Entry Price", color=color.new(color.gray, 30), linewidth=1, style=plot.style_circles)
+
+// Labels for Risk Levels (display on last bar only)
+if show_risk_lines and barstate.islast
+    // SL Label
+    label.new(bar_index, active_sl_price, "SL @ " + str.tostring(active_sl_price, format.mintick) + " (-1R)",
+              style=label.style_label_right, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
+
+    // TP1 Label
+    label.new(bar_index, active_tp1_price, "TP1 @ " + str.tostring(active_tp1_price, format.mintick) + " (+" + str.tostring(tp1_ratio, "#.#") + "R)",
+              style=label.style_label_right, color=color.new(color.green, 20), textcolor=color.white, size=size.small)
+
+    // TP2 Label
+    label.new(bar_index, active_tp2_price, "TP2 @ " + str.tostring(active_tp2_price, format.mintick) + " (+" + str.tostring(tp2_ratio, "#.#") + "R)",
+              style=label.style_label_right, color=color.new(color.yellow, 20), textcolor=color.black, size=size.small)
+
+    // TP3 Label
+    label.new(bar_index, active_tp3_price, "TP3 @ " + str.tostring(active_tp3_price, format.mintick) + " (+" + str.tostring(tp3_ratio, "#.#") + "R)",
+              style=label.style_label_right, color=color.new(color.blue, 20), textcolor=color.white, size=size.small)
+
+    // Position Info Label (above all)
+    float label_y = active_direction == 1 ? active_tp3_price + (atr_current * 0.5) : active_tp3_price - (atr_current * 0.5)
+    string position_text = (active_direction == 1 ? "LONG" : "SHORT") + " | Size: " + str.tostring(int(active_position_size)) + " shares\nRisk: $" + str.tostring(active_risk_amount * active_position_size, "#.##")
+    label.new(bar_index, label_y, position_text,
+              style=label.style_label_down, color=color.new(color.gray, 10), textcolor=color.white, size=size.normal)
+
+//======================================================
 //=============== SECTION 10: DASHBOARD ================
 //======================================================
 
@@ -1633,12 +1884,12 @@ if show_dashboard and barstate.islast
     volatility_points = vol_expanding ? 30 : vol_rising ? 15 : 0
     vol_momentum_points = use_volume_momentum and vol_momentum_strong_trend ? 10 : use_volume_momentum and vol_momentum_rising ? 5 : 0
 
-    quality_label_tooltip = "Signal Quality Score (0-70 points)\n\nMeasures signal strength based on:\n\n📊 VOLUME (0-30 pts): " + str.tostring(vol_points) + " pts\n• Spike (2.5x+) = 30\n• High (1.5x+) = 20\n• Above average = 10\n\n🌪️ VOLATILITY (0-30 pts): " + str.tostring(volatility_points) + " pts\n• Expanding (1.3x+) = 30\n• Rising (1.0x+) = 15\n\n📈 VOL MOMENTUM BONUS (0-10 pts): " + str.tostring(vol_momentum_points) + " pts\n• Strong momentum = 10\n• Rising momentum = 5\n\nThresholds:\n• 60+ = EXCELLENT ⭐⭐⭐\n• 45-59 = STRONG ⭐⭐\n• 30-44 = GOOD ⭐\n• 0-29 = WEAK ⚠️"
+    quality_label_tooltip = "Signal Quality Score (0-85 points)\n\nMeasures signal strength based on:\n\n📊 VOLUME (0-30 pts): " + str.tostring(vol_points) + " pts\n• Spike (2.5x+) = 30\n• High (1.5x+) = 20\n• Above average = 10\n\n🌪️ VOLATILITY (0-30 pts): " + str.tostring(volatility_points) + " pts\n• Expanding (1.3x+) = 30\n• Rising (1.0x+) = 15\n\n📈 VOL MOMENTUM BONUS (0-10 pts): " + str.tostring(vol_momentum_points) + " pts\n• Strong momentum = 10\n• Rising momentum = 5\n\n🔄 MTF ALIGNMENT BONUS (0-15 pts): " + str.tostring(mtf_bonus) + " pts\n• Aligned with HTF = +" + str.tostring(mtf_bonus_points) + " pts\n• Misaligned = 0 pts\n\nThresholds:\n• 70+ = EXCELLENT ⭐⭐⭐\n• 50-69 = STRONG ⭐⭐\n• 30-49 = GOOD ⭐\n• 0-29 = WEAK ⚠️"
 
-    quality_value_tooltip = "Current Score: " + str.tostring(quality_score) + "/70\nLevel: " + quality_level + "\n\n" + (quality_score >= min_quality_score ? "✅ ABOVE minimum threshold (" + str.tostring(min_quality_score) + ")" : "❌ BELOW minimum threshold (" + str.tostring(min_quality_score) + ")") + "\n\nBREAKDOWN:\n━━━━━━━━━━━━\n📊 Volume: " + str.tostring(vol_points) + " pts (" + vol_state + ")\n🌪️ Volatility: " + str.tostring(volatility_points) + " pts (" + volatility_state + ")\n📈 Vol Momentum: " + str.tostring(vol_momentum_points) + " pts" + (use_volume_momentum ? " (" + str.tostring(vol_momentum_ratio, "#.##") + "x)" : " (disabled)") + "\n━━━━━━━━━━━━\nTOTAL: " + str.tostring(quality_score) + " pts\n\n" + (quality_score >= 60 ? "💡 EXCELLENT quality - very high probability signal" : quality_score >= 45 ? "💡 STRONG quality - reliable signal" : quality_score >= 30 ? "💡 GOOD quality - decent signal" : "⚠️ WEAK quality - consider waiting for better setup")
+    quality_value_tooltip = "Current Score: " + str.tostring(quality_score) + "/85\nLevel: " + quality_level + "\n\n" + (quality_score >= min_quality_score ? "✅ ABOVE minimum threshold (" + str.tostring(min_quality_score) + ")" : "❌ BELOW minimum threshold (" + str.tostring(min_quality_score) + ")") + "\n\nBREAKDOWN:\n━━━━━━━━━━━━\n📊 Volume: " + str.tostring(vol_points) + " pts (" + vol_state + ")\n🌪️ Volatility: " + str.tostring(volatility_points) + " pts (" + volatility_state + ")\n📈 Vol Momentum: " + str.tostring(vol_momentum_points) + " pts" + (use_volume_momentum ? " (" + str.tostring(vol_momentum_ratio, "#.##") + "x)" : " (disabled)") + "\n🔄 MTF Bonus: " + str.tostring(mtf_bonus) + " pts" + (enable_mtf_filter ? " (" + mtf_alignment_status + ")" : " (disabled)") + "\n━━━━━━━━━━━━\nTOTAL: " + str.tostring(quality_score) + " pts\n\n" + (quality_score >= 70 ? "💡 EXCELLENT quality - very high probability signal" : quality_score >= 50 ? "💡 STRONG quality - reliable signal" : quality_score >= 30 ? "💡 GOOD quality - decent signal" : "⚠️ WEAK quality - consider waiting for better setup")
 
     table.cell(dashTable, 0, 1, "Signal Quality", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left, tooltip=quality_label_tooltip)
-    table.cell(dashTable, 1, 1, quality_level + " (" + str.tostring(quality_score) + "/70)", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_center, tooltip=quality_value_tooltip)
+    table.cell(dashTable, 1, 1, quality_level + " (" + str.tostring(quality_score) + "/85)", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_center, tooltip=quality_value_tooltip)
     
     // Row 2: SEPARATOR (centered)
     table.cell(dashTable, 0, 2, "═══════════════════", text_color=color.new(color.gray, 50), text_size=size.tiny, text_halign=text.align_center)
@@ -1671,10 +1922,93 @@ if show_dashboard and barstate.islast
     
     table.cell(dashTable, 0, 5, "Volatility", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left, tooltip=volatility_label_tooltip)
     table.cell(dashTable, 1, 5, volatility_state, text_color=color.white, text_size=tableTxtSize, text_halign=text.align_center, tooltip=volatility_value_tooltip)
-    
-    // Row 6: SEPARATOR (centered)
-    table.cell(dashTable, 0, 6, "═══════════════════", text_color=color.new(color.gray, 50), text_size=size.tiny, text_halign=text.align_center)
-    table.merge_cells(dashTable, 0, 6, 1, 6)
+
+    // Row 6: MTF TREND (if enabled)
+    if enable_mtf_filter
+        string mtf_label_tooltip = "Multi-Timeframe Filter\n\nHigher Timeframe: " + htf_timeframe + "\n\nFilters signals based on HTF trend:\n✅ LONG only when HTF bullish\n✅ SHORT only when HTF bearish\n\nBonus: +" + str.tostring(mtf_bonus_points) + " quality points when aligned\n\n💡 Improves win rate by trading with major trend"
+        string mtf_value_tooltip = "HTF Trend: " + mtf_status + "\n\nAlignment: " + mtf_alignment_status + "\n\nCurrent TF: " + (is_bullish ? "🟢 Bullish" : "🔴 Bearish") + "\nHigher TF (" + htf_timeframe + "): " + mtf_status + "\n\n" + (mtf_aligned ? "✅ ALIGNED - Bonus: +" + str.tostring(mtf_bonus_points) + " points\n\n💡 Both timeframes agree - high probability setup!" : "❌ MISALIGNED - No bonus\n\n⚠️ Counter-trend trade - signals filtered!")
+
+        table.cell(dashTable, 0, 6, "MTF Trend (" + htf_timeframe + ")", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left, tooltip=mtf_label_tooltip)
+        table.cell(dashTable, 1, 6, mtf_status + " | " + mtf_alignment_status, text_color=color.white, text_size=tableTxtSize, text_halign=text.align_center, tooltip=mtf_value_tooltip)
+
+    // Row 7: SEPARATOR
+    int sep_row_1 = enable_mtf_filter ? 7 : 6
+    table.cell(dashTable, 0, sep_row_1, "═══════════════════", text_color=color.new(color.gray, 50), text_size=size.tiny, text_halign=text.align_center)
+    table.merge_cells(dashTable, 0, sep_row_1, 1, sep_row_1)
+
+    // Row 8-11: RISK MANAGEMENT (if enabled and position active)
+    int next_row = sep_row_1 + 1
+    if enable_risk_management and not na(active_entry_price) and active_direction != 0
+        // Row 8: RISK MANAGEMENT Header
+        table.cell(dashTable, 0, next_row, "🛡️ RISK MANAGEMENT", text_color=color.white, text_size=tableTxtSize, bgcolor=header_bg, text_halign=text.align_center, tooltip="Active Position Risk Management\n\nATR-based stop loss and take profits\nPosition sizing based on % risk\nTrailing stop after TP1")
+        table.merge_cells(dashTable, 0, next_row, 1, next_row)
+        next_row += 1
+
+        // Row 9: Position Type & Entry
+        string position_type = active_direction == 1 ? "🟢 LONG" : "🔴 SHORT"
+        table.cell(dashTable, 0, next_row, "Position", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left)
+        table.cell(dashTable, 1, next_row, position_type + " @ " + str.tostring(active_entry_price, format.mintick), text_color=color.white, text_size=tableTxtSize, text_halign=text.align_center)
+        next_row += 1
+
+        // Row 10: Stop Loss
+        table.cell(dashTable, 0, next_row, "Stop Loss", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left)
+        table.cell(dashTable, 1, next_row, str.tostring(active_sl_price, format.mintick) + " (-1R)", text_color=color.red, text_size=tableTxtSize, text_halign=text.align_center)
+        next_row += 1
+
+        // Row 11: Take Profits
+        string tp_text = "TP1: " + str.tostring(active_tp1_price, format.mintick) + " (+" + str.tostring(tp1_ratio, "#.#") + "R)"
+        table.cell(dashTable, 0, next_row, "Take Profits", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left)
+        table.cell(dashTable, 1, next_row, tp_text, text_color=color.green, text_size=tableTxtSize, text_halign=text.align_center)
+        next_row += 1
+
+        // Row 12: Position Size
+        table.cell(dashTable, 0, next_row, "Position Size", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left)
+        table.cell(dashTable, 1, next_row, str.tostring(int(active_position_size)) + " shares", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_center)
+        next_row += 1
+
+        // Row separator
+        table.cell(dashTable, 0, next_row, "═══════════════════", text_color=color.new(color.gray, 50), text_size=size.tiny, text_halign=text.align_center)
+        table.merge_cells(dashTable, 0, next_row, 1, next_row)
+        next_row += 1
+
+    // PERFORMANCE METRICS (if have trades)
+    if enable_risk_management and total_trades > 0
+        // Header
+        table.cell(dashTable, 0, next_row, "📊 PERFORMANCE METRICS", text_color=color.white, text_size=tableTxtSize, bgcolor=header_bg, text_halign=text.align_center, tooltip="Strategy Performance Tracking\n\nBased on " + str.tostring(total_trades) + " completed trades\nExit condition: Supertrend flip opposite")
+        table.merge_cells(dashTable, 0, next_row, 1, next_row)
+        next_row += 1
+
+        // Row: Total Trades & Win Rate
+        table.cell(dashTable, 0, next_row, "Total Trades", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left)
+        table.cell(dashTable, 1, next_row, str.tostring(total_trades) + " | WR: " + str.tostring(win_rate, "#.#") + "%", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_center)
+        next_row += 1
+
+        // Row: Profit Factor
+        color pf_color = profit_factor >= 2.0 ? color.green : profit_factor >= 1.0 ? color.yellow : color.red
+        table.cell(dashTable, 0, next_row, "Profit Factor", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left)
+        table.cell(dashTable, 1, next_row, str.tostring(profit_factor, "#.##"), text_color=pf_color, text_size=tableTxtSize, text_halign=text.align_center)
+        next_row += 1
+
+        // Row: Max Drawdown
+        table.cell(dashTable, 0, next_row, "Max Drawdown", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left)
+        table.cell(dashTable, 1, next_row, "-" + str.tostring(max_drawdown_pct, "#.##") + "%", text_color=color.red, text_size=tableTxtSize, text_halign=text.align_center)
+        next_row += 1
+
+        // Row: Avg Win vs Avg Loss
+        table.cell(dashTable, 0, next_row, "Avg W/L", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left)
+        table.cell(dashTable, 1, next_row, "+" + str.tostring(avg_win, "#.##") + "% / -" + str.tostring(avg_loss, "#.##") + "%", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_center)
+        next_row += 1
+
+        // Row: Expectancy
+        color exp_color = expectancy > 0 ? color.green : color.red
+        table.cell(dashTable, 0, next_row, "Expectancy", text_color=color.white, text_size=tableTxtSize, text_halign=text.align_left)
+        table.cell(dashTable, 1, next_row, str.tostring(expectancy, "#.##") + "% per trade", text_color=exp_color, text_size=tableTxtSize, text_halign=text.align_center)
+        next_row += 1
+
+        // Separator
+        table.cell(dashTable, 0, next_row, "═══════════════════", text_color=color.new(color.gray, 50), text_size=size.tiny, text_halign=text.align_center)
+        table.merge_cells(dashTable, 0, next_row, 1, next_row)
+        next_row += 1
     
     // Row 7: Prediction Status (always show if prediction enabled)
     if i_enable_prediction

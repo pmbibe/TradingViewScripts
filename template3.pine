@@ -318,6 +318,10 @@ vol_stable = atr_ratio > 0.9 and atr_ratio < 1.0
 // Volatility State String
 volatility_state = atr_ratio >= 1.3 ? "🔥 EXPANDING" : vol_rising ? "📈 RISING" : vol_contracting ? "📉 CONTRACTING" : "➡️ STABLE"
 
+// Pre-declare signal variables (will be assigned later in Section 8)
+var bool goldenCross = false
+var bool deathCross = false
+
 //======================================================
 //============ SECTION 6: RISK MANAGEMENT ==============
 //======================================================
@@ -436,10 +440,10 @@ if enable_risk_management
         // Calculate P&L %
         float entry = active_entry_price[1]
         float exit_price = close
-        int direction = was_long ? 1 : -1
+        int trade_direction = was_long ? 1 : -1
 
         // P&L as % of entry price
-        float pnl_pct = direction == 1 ? ((exit_price - entry) / entry * 100) : ((entry - exit_price) / entry * 100)
+        float pnl_pct = trade_direction == 1 ? ((exit_price - entry) / entry * 100) : ((entry - exit_price) / entry * 100)
 
         // Store trade
         array.push(trade_pnl_percent, pnl_pct)
@@ -574,8 +578,8 @@ if scalpel_short
 //======================================================
 //================ FINAL SIGNALS =======================
 //======================================================
-goldenCross = use_scalpel ? scalpel_long : classic_long
-deathCross = use_scalpel ? scalpel_short : classic_short
+goldenCross := use_scalpel ? scalpel_long : classic_long
+deathCross := use_scalpel ? scalpel_short : classic_short
 
 // Track last signal
 var string lastSignalType = na
@@ -1103,9 +1107,11 @@ if stFlip and barstate.isconfirmed
     advanced_learning_mult := 1.0
     advanced_regime_mult := 1.0
 
+    // Call detect_key_levels consistently (required by Pine Script)
+    [pivot_highs, pivot_lows] = detect_key_levels(i_structure_lookback)
+
     if i_prediction_mode == "Advanced"
         // 1️⃣ Market Structure Filter (±30%)
-        [pivot_highs, pivot_lows] = detect_key_levels(i_structure_lookback)
         advanced_structure_mult := get_structure_multiplier(close, pivot_highs, pivot_lows, i_structure_sensitivity)
 
         // 2️⃣ Stock Type Modifier (±40%)

@@ -437,12 +437,16 @@ if show_dashboard
 // 🎨 PLOTTING
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Plot signals with strength
-bearish_label_text = bearish_sweep ? "▼\n" + str.tostring(signal_strength) + "%" : na
-bullish_label_text = bullish_sweep ? "▲\n" + str.tostring(signal_strength) + "%" : na
+// Plot signals - plotshape with fixed text
+plotshape(bearish_sweep ? high : na, "Bearish CISD", shape.labeldown, location.abovebar, red, size = size.small, text = "▼", textcolor = chart.fg_color)
+plotshape(bullish_sweep ? low : na, "Bullish CISD", shape.labelup, location.belowbar, green, size = size.small, text = "▲", textcolor = chart.fg_color)
 
-plotshape(bearish_sweep ? high : na, "Bearish CISD", shape.labeldown, location.abovebar, red, size = size.small, text = bearish_label_text, textcolor = chart.fg_color)
-plotshape(bullish_sweep ? low : na, "Bullish CISD", shape.labelup, location.belowbar, green, size = size.small, text = bullish_label_text, textcolor = chart.fg_color)
+// Add labels to show signal strength
+if bearish_sweep
+    label.new(bar_index, high, str.tostring(signal_strength) + "%", style = label.style_none, yloc = yloc.abovebar, color = color.new(color.white, 100), textcolor = red, size = size.small)
+
+if bullish_sweep
+    label.new(bar_index, low, str.tostring(signal_strength) + "%", style = label.style_none, yloc = yloc.belowbar, color = color.new(color.white, 100), textcolor = green, size = size.small)
 
 // Plot swing points
 plotchar(not na(pivhigh) ? high[len] : na, "Swing High", "●", location.absolute, red, size = size.tiny, offset = -len)
@@ -459,28 +463,30 @@ plotcandle(open, high, low, close, "Price Candles", candle_col, candle_col_, bor
 
 // Bearish alert with details
 if bearish_sweep
-    alert_msg = "🔴 BEARISH CISD DETECTED\n" +
-                "━━━━━━━━━━━━━━━━━━\n" +
-                "📍 Price: " + str.tostring(close, format.mintick) + "\n" +
-                "🛑 SL: " + str.tostring(sl_level, format.mintick) + "\n" +
-                "🎯 TP: " + str.tostring(tp_level, format.mintick) + "\n" +
-                "💪 Strength: " + str.tostring(signal_strength) + "%\n" +
-                "📊 Volume: " + (has_volume_confirmation ? "Confirmed ✓" : "Low") + "\n" +
-                "📈 HTF: " + (use_mtf ? (htf_trend == -1 ? "Aligned ✓" : "Divergent") : "Off") + "\n" +
-                "⚡ Risk/Reward: 1:" + str.tostring(risk_reward)
+    vol_status = has_volume_confirmation ? "Confirmed" : "Low"
+    htf_status = use_mtf ? (htf_trend == -1 ? "Aligned" : "Divergent") : "Off"
+    alert_msg = "BEARISH CISD DETECTED | " +
+                "Price: " + str.tostring(close, format.mintick) + " | " +
+                "SL: " + str.tostring(sl_level, format.mintick) + " | " +
+                "TP: " + str.tostring(tp_level, format.mintick) + " | " +
+                "Strength: " + str.tostring(signal_strength) + "% | " +
+                "Volume: " + vol_status + " | " +
+                "HTF: " + htf_status + " | " +
+                "R:R 1:" + str.tostring(risk_reward)
     alert(alert_msg, alert.freq_once_per_bar_close)
 
 // Bullish alert with details
 if bullish_sweep
-    alert_msg = "🟢 BULLISH CISD DETECTED\n" +
-                "━━━━━━━━━━━━━━━━━━\n" +
-                "📍 Price: " + str.tostring(close, format.mintick) + "\n" +
-                "🛑 SL: " + str.tostring(sl_level, format.mintick) + "\n" +
-                "🎯 TP: " + str.tostring(tp_level, format.mintick) + "\n" +
-                "💪 Strength: " + str.tostring(signal_strength) + "%\n" +
-                "📊 Volume: " + (has_volume_confirmation ? "Confirmed ✓" : "Low") + "\n" +
-                "📈 HTF: " + (use_mtf ? (htf_trend == 1 ? "Aligned ✓" : "Divergent") : "Off") + "\n" +
-                "⚡ Risk/Reward: 1:" + str.tostring(risk_reward)
+    vol_status = has_volume_confirmation ? "Confirmed" : "Low"
+    htf_status = use_mtf ? (htf_trend == 1 ? "Aligned" : "Divergent") : "Off"
+    alert_msg = "BULLISH CISD DETECTED | " +
+                "Price: " + str.tostring(close, format.mintick) + " | " +
+                "SL: " + str.tostring(sl_level, format.mintick) + " | " +
+                "TP: " + str.tostring(tp_level, format.mintick) + " | " +
+                "Strength: " + str.tostring(signal_strength) + "% | " +
+                "Volume: " + vol_status + " | " +
+                "HTF: " + htf_status + " | " +
+                "R:R 1:" + str.tostring(risk_reward)
     alert(alert_msg, alert.freq_once_per_bar_close)
 
 // Basic alerts (for backward compatibility)

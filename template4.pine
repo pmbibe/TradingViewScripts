@@ -1,69 +1,633 @@
-// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International  
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // https://creativecommons.org/licenses/by-nc-sa/4.0/
 // © BigBeluga
+// Optimized by Claude - Non-repainting version with enhanced features
 
 //@version=6
-indicator("Swing Traces [BigBeluga]", overlay = true, max_labels_count = 500)
+indicator("Swing Traces [BigBeluga] - Optimized", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
 
-// ＩＮＰＵＴＳ ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――{
-sensitivityLength     = input.int(50, "Sensitivity")
-upperTraceLongevity   = input.int(150, "Upper Trace Longevity")
-lowerTraceLongevity   = input.int(150, "Lower Trace Longevity")
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 1: INPUT SETTINGS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
-var lastUpperSwing    = float(na)
-var lastLowerSwing    = float(na)
+// --- Swing Detection Settings ---
+string GROUP_SWING = "═══ Swing Detection ═══"
+sensitivityLength       = input.int(50, "Sensitivity Length", minval=10, maxval=200, group=GROUP_SWING,
+                          tooltip="Number of bars to look back for highest high / lowest low detection")
+confirmationBars        = input.int(3, "Confirmation Bars", minval=2, maxval=5, group=GROUP_SWING,
+                          tooltip="Number of consecutive bars required to confirm a swing point (prevents repainting)")
+usePercentConfirm       = input.bool(false, "Use % Price Confirmation", group=GROUP_SWING,
+                          tooltip="Use percentage price movement instead of bar count for confirmation")
+percentConfirmation     = input.float(2.0, "Price Confirmation %", minval=0.5, maxval=10.0, step=0.5, group=GROUP_SWING,
+                          tooltip="Price must move this % from swing point to confirm")
 
-var upperBarsActive   = 0
-var lowerBarsActive   = 0
+// --- Trace Size Settings ---
+string GROUP_TRACE = "═══ Trace Size ═══"
+upperTraceLongevity     = input.int(150, "Upper Trace Longevity", minval=10, maxval=500, group=GROUP_TRACE,
+                          tooltip="Number of bars the upper trace remains visible")
+lowerTraceLongevity     = input.int(150, "Lower Trace Longevity", minval=10, maxval=500, group=GROUP_TRACE,
+                          tooltip="Number of bars the lower trace remains visible")
+atrPeriod               = input.int(14, "ATR Period", minval=5, maxval=50, group=GROUP_TRACE,
+                          tooltip="Period for Average True Range calculation")
+atrMultiplier           = input.float(0.5, "ATR Multiplier", minval=0.3, maxval=2.0, step=0.1, group=GROUP_TRACE,
+                          tooltip="Multiplier for ATR to determine trace size")
+usePercentTrace         = input.bool(false, "Use % of Price for Trace", group=GROUP_TRACE,
+                          tooltip="Use percentage of swing price instead of ATR for trace size")
+percentTraceSize        = input.float(1.5, "Trace Size %", minval=0.5, maxval=5.0, step=0.5, group=GROUP_TRACE,
+                          tooltip="Percentage of swing price for trace size")
 
-var upperTraceSize    = 0.0
-var lowerTraceSize    = 0.0
-// }
+// --- Signal Settings ---
+string GROUP_SIGNAL = "═══ Signal Settings ═══"
+signalDelayBars         = input.int(2, "Signal Delay Bars", minval=0, maxval=10, group=GROUP_SIGNAL,
+                          tooltip="Minimum bars swing must be active before generating signals")
+requireCandleColor      = input.bool(true, "Require Candle Color Match", group=GROUP_SIGNAL,
+                          tooltip="Long signals require green candle, short signals require red candle")
+useVolumeFilter         = input.bool(true, "Volume Filter", group=GROUP_SIGNAL,
+                          tooltip="Require volume above average for signal confirmation")
+volumeSMAPeriod         = input.int(20, "Volume SMA Period", minval=5, maxval=50, group=GROUP_SIGNAL,
+                          tooltip="Period for volume moving average")
 
-// ＣＡＬＣＵＬＡＴＩＯＮＳ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――{
-highestInRange = ta.highest(sensitivityLength)
-lowestInRange  = ta.lowest(sensitivityLength)
+// --- Trend Filter Settings ---
+string GROUP_TREND = "═══ Trend Filter ═══"
+useTrendFilter          = input.bool(false, "Enable Trend Filter", group=GROUP_TREND,
+                          tooltip="Only allow signals in direction of EMA trend")
+emaFastPeriod           = input.int(50, "EMA Fast Period", minval=10, maxval=100, group=GROUP_TREND,
+                          tooltip="Period for fast EMA")
+emaSlowPeriod           = input.int(200, "EMA Slow Period", minval=50, maxval=300, group=GROUP_TREND,
+                          tooltip="Period for slow EMA")
+showEMAs                = input.bool(false, "Show EMAs on Chart", group=GROUP_TREND,
+                          tooltip="Display EMA lines on chart")
 
-// Reset when new highs/lows form
-if highestInRange == high
-    lastUpperSwing := float(na)
-if lowestInRange == low
-    lastLowerSwing := float(na)
+// --- Risk Management Settings ---
+string GROUP_RISK = "═══ Risk Management ═══"
+showStopLoss            = input.bool(true, "Show Stop Loss", group=GROUP_RISK,
+                          tooltip="Display stop loss level on signals")
+showTakeProfit          = input.bool(true, "Show Take Profit", group=GROUP_RISK,
+                          tooltip="Display take profit level on signals")
+slMultiplier            = input.float(0.5, "SL Distance (ATR Multiple)", minval=0.1, maxval=2.0, step=0.1, group=GROUP_RISK,
+                          tooltip="Stop loss distance as multiple of trace size")
+riskRewardRatio         = input.float(2.0, "Risk:Reward Ratio", minval=1.0, maxval=5.0, step=0.5, group=GROUP_RISK,
+                          tooltip="Take profit distance as multiple of stop loss distance")
+slLineLength            = input.int(20, "SL/TP Line Length (bars)", minval=5, maxval=50, group=GROUP_RISK,
+                          tooltip="Length of SL/TP lines in bars")
 
-// Detect upper swing
-if high[1] == highestInRange[1] and high < highestInRange
-    upperBarsActive := 0
-    lastUpperSwing := high[1]
-    upperTraceSize := (high - low) / 2
+// --- Statistics Settings ---
+string GROUP_STATS = "═══ Statistics ═══"
+showStatsTable          = input.bool(true, "Show Statistics Table", group=GROUP_STATS,
+                          tooltip="Display performance statistics table")
+tablePosition           = input.string("Top Right", "Table Position",
+                          options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group=GROUP_STATS)
 
-// Detect lower swing
-if low[1] == lowestInRange[1] and low > lowestInRange
-    lowerBarsActive := 0
-    lastLowerSwing := low[1]
-    lowerTraceSize := (high - low) / 2
+// --- Visual Settings ---
+string GROUP_VISUAL = "═══ Visualization ═══"
+validUpperColor         = input.color(color.blue, "Valid Upper Swing Color", group=GROUP_VISUAL)
+validLowerColor         = input.color(color.lime, "Valid Lower Swing Color", group=GROUP_VISUAL)
+invalidatedColor        = input.color(color.gray, "Invalidated Swing Color", group=GROUP_VISUAL)
+signalLongColor         = input.color(color.green, "Long Signal Color", group=GROUP_VISUAL)
+signalShortColor        = input.color(color.red, "Short Signal Color", group=GROUP_VISUAL)
+slColor                 = input.color(color.red, "Stop Loss Color", group=GROUP_VISUAL)
+tpColor                 = input.color(color.green, "Take Profit Color", group=GROUP_VISUAL)
 
-// Increment longevity counters
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 2: CORE CALCULATIONS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- ATR Calculation for Trace Size ---
+// Using ATR provides a volatility-adjusted trace size that adapts to market conditions
+atrValue = ta.atr(atrPeriod)
+
+// --- Calculate Trace Size ---
+// Function to calculate trace size based on user preference (ATR or percentage)
+calcTraceSize(float swingPrice) =>
+    usePercentTrace ? swingPrice * (percentTraceSize / 100) : atrValue * atrMultiplier
+
+// --- Volume Filter ---
+// Volume must be above its simple moving average for signal confirmation
+volumeSMA = ta.sma(volume, volumeSMAPeriod)
+volumeConfirmed = not useVolumeFilter or volume > volumeSMA
+
+// --- Trend Filter (EMA) ---
+// Calculate EMAs for trend direction filtering
+emaFast = ta.ema(close, emaFastPeriod)
+emaSlow = ta.ema(close, emaSlowPeriod)
+bullishTrend = emaFast > emaSlow
+bearishTrend = emaFast < emaSlow
+
+// --- Trend Filter Conditions ---
+// If trend filter is enabled, only allow signals in trend direction
+longAllowedByTrend = not useTrendFilter or bullishTrend
+shortAllowedByTrend = not useTrendFilter or bearishTrend
+
+// --- Highest/Lowest Detection ---
+// These are the core values used to detect potential swing points
+highestInRange = ta.highest(high, sensitivityLength)
+lowestInRange = ta.lowest(low, sensitivityLength)
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 3: SWING POINT TRACKING (NON-REPAINTING)  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Persistent Variables for Swing Tracking ---
+// CRITICAL: We use arrays to store swing history - this prevents repainting
+// Old swings are marked as invalidated but NEVER deleted
+
+// Upper Swing Arrays
+var float[] upperSwingPrices = array.new_float()      // Stores swing high prices
+var int[] upperSwingBars = array.new_int()            // Stores bar_index when swing was detected
+var int[] upperSwingConfirmBars = array.new_int()     // Stores bars since detection (for confirmation)
+var bool[] upperSwingValid = array.new_bool()         // True = valid, False = invalidated
+var float[] upperSwingTraceSize = array.new_float()   // Stores trace size at detection time
+
+// Lower Swing Arrays
+var float[] lowerSwingPrices = array.new_float()      // Stores swing low prices
+var int[] lowerSwingBars = array.new_int()            // Stores bar_index when swing was detected
+var int[] lowerSwingConfirmBars = array.new_int()     // Stores bars since detection (for confirmation)
+var bool[] lowerSwingValid = array.new_bool()         // True = valid, False = invalidated
+var float[] lowerSwingTraceSize = array.new_float()   // Stores trace size at detection time
+
+// --- Current Active Swing (most recent confirmed swing) ---
+var float lastUpperSwing = na
+var float lastLowerSwing = na
+var int upperBarsActive = 0
+var int lowerBarsActive = 0
+var float upperTraceSize = 0.0
+var float lowerTraceSize = 0.0
+var int lastUpperSwingBar = 0
+var int lastLowerSwingBar = 0
+
+// --- Pending Swing Detection (awaiting confirmation) ---
+var float pendingUpperSwing = na
+var float pendingLowerSwing = na
+var int pendingUpperBars = 0
+var int pendingLowerBars = 0
+var int pendingUpperStartBar = 0
+var int pendingLowerStartBar = 0
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 4: SWING DETECTION LOGIC (WITH CONFIRMATION)  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Detect Potential Upper Swing (Swing High) ---
+// A potential swing high is detected when price was at the highest point and now moved lower
+potentialUpperSwing = high[confirmationBars] == ta.highest(high, sensitivityLength)[confirmationBars]
+
+// Check confirmation based on method selected
+upperConfirmedByBars = true
+if potentialUpperSwing
+    // Price must stay below the swing high for confirmationBars consecutive bars
+    for i = 0 to confirmationBars - 1
+        if high[i] >= high[confirmationBars]
+            upperConfirmedByBars := false
+            break
+
+upperConfirmedByPercent = potentialUpperSwing and usePercentConfirm and
+                          (high[confirmationBars] - low) / high[confirmationBars] * 100 >= percentConfirmation
+
+// Final confirmation: either bar count OR percentage (based on user setting)
+upperSwingConfirmed = potentialUpperSwing and (usePercentConfirm ? upperConfirmedByPercent : upperConfirmedByBars)
+
+// --- Detect Potential Lower Swing (Swing Low) ---
+// A potential swing low is detected when price was at the lowest point and now moved higher
+potentialLowerSwing = low[confirmationBars] == ta.lowest(low, sensitivityLength)[confirmationBars]
+
+// Check confirmation based on method selected
+lowerConfirmedByBars = true
+if potentialLowerSwing
+    // Price must stay above the swing low for confirmationBars consecutive bars
+    for i = 0 to confirmationBars - 1
+        if low[i] <= low[confirmationBars]
+            lowerConfirmedByBars := false
+            break
+
+lowerConfirmedByPercent = potentialLowerSwing and usePercentConfirm and
+                          (high - low[confirmationBars]) / low[confirmationBars] * 100 >= percentConfirmation
+
+// Final confirmation: either bar count OR percentage (based on user setting)
+lowerSwingConfirmed = potentialLowerSwing and (usePercentConfirm ? lowerConfirmedByPercent : lowerConfirmedByBars)
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 5: SWING STATE MANAGEMENT (NON-REPAINTING CORE)  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Process New Upper Swing ---
+// CRITICAL: New swing does NOT delete old swing - it marks old as invalidated
+if upperSwingConfirmed
+    newSwingPrice = high[confirmationBars]
+    newTraceSize = calcTraceSize(newSwingPrice)
+    newSwingBar = bar_index - confirmationBars
+
+    // Check if this is a NEW swing (not duplicate of current)
+    isNewSwing = na(lastUpperSwing) or newSwingBar != lastUpperSwingBar
+
+    if isNewSwing
+        // Mark ALL previous valid upper swings as INVALIDATED (not deleted!)
+        if array.size(upperSwingValid) > 0
+            for i = 0 to array.size(upperSwingValid) - 1
+                if array.get(upperSwingValid, i)
+                    array.set(upperSwingValid, i, false)
+
+        // Add new swing to history arrays
+        array.push(upperSwingPrices, newSwingPrice)
+        array.push(upperSwingBars, newSwingBar)
+        array.push(upperSwingConfirmBars, 0)
+        array.push(upperSwingValid, true)
+        array.push(upperSwingTraceSize, newTraceSize)
+
+        // Update current active swing
+        lastUpperSwing := newSwingPrice
+        lastUpperSwingBar := newSwingBar
+        upperTraceSize := newTraceSize
+        upperBarsActive := confirmationBars  // Already confirmed, so start from confirmation count
+
+// --- Process New Lower Swing ---
+if lowerSwingConfirmed
+    newSwingPrice = low[confirmationBars]
+    newTraceSize = calcTraceSize(newSwingPrice)
+    newSwingBar = bar_index - confirmationBars
+
+    // Check if this is a NEW swing (not duplicate of current)
+    isNewSwing = na(lastLowerSwing) or newSwingBar != lastLowerSwingBar
+
+    if isNewSwing
+        // Mark ALL previous valid lower swings as INVALIDATED (not deleted!)
+        if array.size(lowerSwingValid) > 0
+            for i = 0 to array.size(lowerSwingValid) - 1
+                if array.get(lowerSwingValid, i)
+                    array.set(lowerSwingValid, i, false)
+
+        // Add new swing to history arrays
+        array.push(lowerSwingPrices, newSwingPrice)
+        array.push(lowerSwingBars, newSwingBar)
+        array.push(lowerSwingConfirmBars, 0)
+        array.push(lowerSwingValid, true)
+        array.push(lowerSwingTraceSize, newTraceSize)
+
+        // Update current active swing
+        lastLowerSwing := newSwingPrice
+        lastLowerSwingBar := newSwingBar
+        lowerTraceSize := newTraceSize
+        lowerBarsActive := confirmationBars
+
+// --- Increment Active Counters ---
+// Track how long the current swing has been active
 if not na(lastUpperSwing)
     upperBarsActive += 1
 if not na(lastLowerSwing)
     lowerBarsActive += 1
-// }
 
-// ＰＬＯＴ ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――{
-plotchar(upperBarsActive >  4 ? lastUpperSwing : na, "Upper Trace", "▅", location.absolute, color.from_gradient(upperBarsActive, 3, upperTraceLongevity, color.blue, color(na)))
-plotchar(upperBarsActive >= 4 ? lastUpperSwing : na, "Upper Trace", "▅", location.absolute, upperBarsActive <= 7 ? color.blue : color(na), offset = -3)
-plotchar(upperBarsActive >  4 ? lastUpperSwing - upperTraceSize : na, "Upper Trace", "▂", location.absolute, color.from_gradient(upperBarsActive, 3, upperTraceLongevity, color.blue, color(na)))
-plotchar(upperBarsActive >= 4 ? lastUpperSwing - upperTraceSize : na, "Upper Trace", "▂", location.absolute, upperBarsActive <= 7 ? color.blue : color(na), offset = -3)
+// --- Update all swing confirmation bar counts in arrays ---
+if array.size(upperSwingConfirmBars) > 0
+    for i = 0 to array.size(upperSwingConfirmBars) - 1
+        array.set(upperSwingConfirmBars, i, array.get(upperSwingConfirmBars, i) + 1)
 
-plotchar(lowerBarsActive >  4 ? lastLowerSwing : na, "Lower Trace", "▅", location.absolute, color.from_gradient(lowerBarsActive, 3, lowerTraceLongevity, color.lime, color(na)))
-plotchar(lowerBarsActive >= 4 ? lastLowerSwing : na, "Lower Trace", "▅", location.absolute, lowerBarsActive <= 7 ? color.lime : color(na), offset = -3)
-plotchar(lowerBarsActive >  4 ? lastLowerSwing + lowerTraceSize : na, "Lower Trace", "▂", location.absolute, color.from_gradient(lowerBarsActive, 3, lowerTraceLongevity, color.lime, color(na)))
-plotchar(lowerBarsActive >= 4 ? lastLowerSwing + lowerTraceSize : na, "Lower Trace", "▂", location.absolute, lowerBarsActive <= 7 ? color.lime : color(na), offset = -3)
+if array.size(lowerSwingConfirmBars) > 0
+    for i = 0 to array.size(lowerSwingConfirmBars) - 1
+        array.set(lowerSwingConfirmBars, i, array.get(lowerSwingConfirmBars, i) + 1)
 
-// Signals
-if ta.crossover(low, lastLowerSwing + lowerTraceSize) and not na(lastLowerSwing) and lowerBarsActive > 5
-    label.new(bar_index - 1, low[1], style = label.style_label_up, color = color(na), text = "●", textcolor = color.lime)
 
-if ta.crossunder(high, lastUpperSwing - upperTraceSize) and not na(lastUpperSwing) and upperBarsActive > 5
-    label.new(bar_index - 1, high[1], style = label.style_label_down, color = color(na), text = "●", textcolor = color.blue)
-// }
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 6: SIGNAL GENERATION  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Candle Color Conditions ---
+isGreenCandle = close > open
+isRedCandle = close < open
+
+// --- Long Signal Conditions ---
+// 1. Price close crosses above the lower trace level
+// 2. Lower swing exists and is valid
+// 3. Swing has been active for minimum required bars
+// 4. Optional: Candle must be green
+// 5. Optional: Volume must be above average
+// 6. Optional: Must be in bullish trend
+
+longCrossover = ta.crossover(close, lastLowerSwing + lowerTraceSize)
+longBaseCondition = longCrossover and not na(lastLowerSwing) and lowerBarsActive >= signalDelayBars
+longCandleCondition = not requireCandleColor or isGreenCandle
+longSignal = longBaseCondition and longCandleCondition and volumeConfirmed and longAllowedByTrend
+
+// --- Short Signal Conditions ---
+// 1. Price close crosses below the upper trace level
+// 2. Upper swing exists and is valid
+// 3. Swing has been active for minimum required bars
+// 4. Optional: Candle must be red
+// 5. Optional: Volume must be above average
+// 6. Optional: Must be in bearish trend
+
+shortCrossover = ta.crossunder(close, lastUpperSwing - upperTraceSize)
+shortBaseCondition = shortCrossover and not na(lastUpperSwing) and upperBarsActive >= signalDelayBars
+shortCandleCondition = not requireCandleColor or isRedCandle
+shortSignal = shortBaseCondition and shortCandleCondition and volumeConfirmed and shortAllowedByTrend
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 7: RISK MANAGEMENT CALCULATIONS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Long Trade Risk Management ---
+// Stop Loss: Below the swing low minus a buffer
+// Take Profit: Based on risk:reward ratio
+
+longEntryPrice = close
+longStopLoss = lastLowerSwing - (lowerTraceSize * slMultiplier)
+longRiskAmount = longEntryPrice - longStopLoss
+longTakeProfit = longEntryPrice + (longRiskAmount * riskRewardRatio)
+
+// --- Short Trade Risk Management ---
+// Stop Loss: Above the swing high plus a buffer
+// Take Profit: Based on risk:reward ratio
+
+shortEntryPrice = close
+shortStopLoss = lastUpperSwing + (upperTraceSize * slMultiplier)
+shortRiskAmount = shortStopLoss - shortEntryPrice
+shortTakeProfit = shortEntryPrice - (shortRiskAmount * riskRewardRatio)
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 8: PERFORMANCE TRACKING  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Signal Counters ---
+var int totalLongSignals = 0
+var int totalShortSignals = 0
+var int longWins = 0
+var int longLosses = 0
+var int shortWins = 0
+var int shortLosses = 0
+
+// --- Track Active Trades for Performance ---
+var bool inLongTrade = false
+var bool inShortTrade = false
+var float activeLongEntry = na
+var float activeLongSL = na
+var float activeLongTP = na
+var float activeShortEntry = na
+var float activeShortSL = na
+var float activeShortTP = na
+
+// --- Process Long Signal ---
+if longSignal and not inLongTrade
+    totalLongSignals += 1
+    inLongTrade := true
+    activeLongEntry := longEntryPrice
+    activeLongSL := longStopLoss
+    activeLongTP := longTakeProfit
+
+// --- Process Short Signal ---
+if shortSignal and not inShortTrade
+    totalShortSignals += 1
+    inShortTrade := true
+    activeShortEntry := shortEntryPrice
+    activeShortSL := shortStopLoss
+    activeShortTP := shortTakeProfit
+
+// --- Check Long Trade Outcome ---
+if inLongTrade
+    if low <= activeLongSL
+        longLosses += 1
+        inLongTrade := false
+        activeLongEntry := na
+    else if high >= activeLongTP
+        longWins += 1
+        inLongTrade := false
+        activeLongEntry := na
+
+// --- Check Short Trade Outcome ---
+if inShortTrade
+    if high >= activeShortSL
+        shortLosses += 1
+        inShortTrade := false
+        activeShortEntry := na
+    else if low <= activeShortTP
+        shortWins += 1
+        inShortTrade := false
+        activeShortEntry := na
+
+// --- Calculate Statistics ---
+totalSignals = totalLongSignals + totalShortSignals
+totalWins = longWins + shortWins
+totalLosses = longLosses + shortLosses
+totalClosed = totalWins + totalLosses
+winRate = totalClosed > 0 ? (totalWins / totalClosed) * 100 : 0.0
+longWinRate = (longWins + longLosses) > 0 ? (longWins / (longWins + longLosses)) * 100 : 0.0
+shortWinRate = (shortWins + shortLosses) > 0 ? (shortWins / (shortWins + shortLosses)) * 100 : 0.0
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 9: VISUALIZATION - TRACES  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Determine if current swings should be displayed ---
+showUpperTrace = not na(lastUpperSwing) and upperBarsActive <= upperTraceLongevity
+showLowerTrace = not na(lastLowerSwing) and lowerBarsActive <= lowerTraceLongevity
+
+// --- Calculate fade colors using gradient ---
+upperFadeColor = color.from_gradient(upperBarsActive, confirmationBars + 1, upperTraceLongevity, validUpperColor, color.new(validUpperColor, 100))
+lowerFadeColor = color.from_gradient(lowerBarsActive, confirmationBars + 1, lowerTraceLongevity, validLowerColor, color.new(validLowerColor, 100))
+
+// --- Upper Trace Visualization (Valid Swings) ---
+// Main trace line at swing high level
+plotchar(upperBarsActive > confirmationBars + 1 and showUpperTrace ? lastUpperSwing : na,
+         "Upper Trace Main", "▅", location.absolute, upperFadeColor)
+plotchar(upperBarsActive >= confirmationBars + 1 and showUpperTrace ? lastUpperSwing : na,
+         "Upper Trace Start", "▅", location.absolute,
+         upperBarsActive <= confirmationBars + 4 ? validUpperColor : color(na), offset = -(confirmationBars + 1))
+
+// Secondary trace line (offset by trace size)
+plotchar(upperBarsActive > confirmationBars + 1 and showUpperTrace ? lastUpperSwing - upperTraceSize : na,
+         "Upper Trace Secondary", "▂", location.absolute, upperFadeColor)
+plotchar(upperBarsActive >= confirmationBars + 1 and showUpperTrace ? lastUpperSwing - upperTraceSize : na,
+         "Upper Trace Secondary Start", "▂", location.absolute,
+         upperBarsActive <= confirmationBars + 4 ? validUpperColor : color(na), offset = -(confirmationBars + 1))
+
+// --- Lower Trace Visualization (Valid Swings) ---
+// Main trace line at swing low level
+plotchar(lowerBarsActive > confirmationBars + 1 and showLowerTrace ? lastLowerSwing : na,
+         "Lower Trace Main", "▅", location.absolute, lowerFadeColor)
+plotchar(lowerBarsActive >= confirmationBars + 1 and showLowerTrace ? lastLowerSwing : na,
+         "Lower Trace Start", "▅", location.absolute,
+         lowerBarsActive <= confirmationBars + 4 ? validLowerColor : color(na), offset = -(confirmationBars + 1))
+
+// Secondary trace line (offset by trace size)
+plotchar(lowerBarsActive > confirmationBars + 1 and showLowerTrace ? lastLowerSwing + lowerTraceSize : na,
+         "Lower Trace Secondary", "▂", location.absolute, lowerFadeColor)
+plotchar(lowerBarsActive >= confirmationBars + 1 and showLowerTrace ? lastLowerSwing + lowerTraceSize : na,
+         "Lower Trace Secondary Start", "▂", location.absolute,
+         lowerBarsActive <= confirmationBars + 4 ? validLowerColor : color(na), offset = -(confirmationBars + 1))
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 10: VISUALIZATION - SIGNALS & RISK LEVELS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Long Signal Visualization ---
+if longSignal
+    // Main signal label
+    string longText = "LONG\nEntry: " + str.tostring(longEntryPrice, "#.##") +
+                      "\nSL: " + str.tostring(longStopLoss, "#.##") +
+                      "\nTP: " + str.tostring(longTakeProfit, "#.##") +
+                      "\nR:R 1:" + str.tostring(riskRewardRatio, "#.#")
+
+    label.new(bar_index, low,
+              text = longText,
+              style = label.style_label_up,
+              color = signalLongColor,
+              textcolor = color.white,
+              size = size.small)
+
+    // Stop Loss line
+    if showStopLoss
+        line.new(bar_index, longStopLoss, bar_index + slLineLength, longStopLoss,
+                 color = slColor, width = 2, style = line.style_dashed)
+        label.new(bar_index + slLineLength, longStopLoss,
+                  text = "SL", style = label.style_label_left,
+                  color = slColor, textcolor = color.white, size = size.tiny)
+
+    // Take Profit line
+    if showTakeProfit
+        line.new(bar_index, longTakeProfit, bar_index + slLineLength, longTakeProfit,
+                 color = tpColor, width = 2, style = line.style_dashed)
+        label.new(bar_index + slLineLength, longTakeProfit,
+                  text = "TP", style = label.style_label_left,
+                  color = tpColor, textcolor = color.white, size = size.tiny)
+
+// --- Short Signal Visualization ---
+if shortSignal
+    // Main signal label
+    string shortText = "SHORT\nEntry: " + str.tostring(shortEntryPrice, "#.##") +
+                       "\nSL: " + str.tostring(shortStopLoss, "#.##") +
+                       "\nTP: " + str.tostring(shortTakeProfit, "#.##") +
+                       "\nR:R 1:" + str.tostring(riskRewardRatio, "#.#")
+
+    label.new(bar_index, high,
+              text = shortText,
+              style = label.style_label_down,
+              color = signalShortColor,
+              textcolor = color.white,
+              size = size.small)
+
+    // Stop Loss line
+    if showStopLoss
+        line.new(bar_index, shortStopLoss, bar_index + slLineLength, shortStopLoss,
+                 color = slColor, width = 2, style = line.style_dashed)
+        label.new(bar_index + slLineLength, shortStopLoss,
+                  text = "SL", style = label.style_label_left,
+                  color = slColor, textcolor = color.white, size = size.tiny)
+
+    // Take Profit line
+    if showTakeProfit
+        line.new(bar_index, shortTakeProfit, bar_index + slLineLength, shortTakeProfit,
+                 color = tpColor, width = 2, style = line.style_dashed)
+        label.new(bar_index + slLineLength, shortTakeProfit,
+                  text = "TP", style = label.style_label_left,
+                  color = tpColor, textcolor = color.white, size = size.tiny)
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 11: VISUALIZATION - EMA TREND LINES  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Plot EMAs if enabled ---
+plot(showEMAs and useTrendFilter ? emaFast : na, "EMA Fast", color = color.new(color.orange, 30), linewidth = 2)
+plot(showEMAs and useTrendFilter ? emaSlow : na, "EMA Slow", color = color.new(color.purple, 30), linewidth = 2)
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 12: STATISTICS TABLE  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Determine Table Position ---
+tablePos = switch tablePosition
+    "Top Left" => position.top_left
+    "Top Right" => position.top_right
+    "Bottom Left" => position.bottom_left
+    "Bottom Right" => position.bottom_right
+
+// --- Create and Populate Statistics Table ---
+var table statsTable = na
+if showStatsTable and barstate.islast
+    // Delete old table if exists
+    if not na(statsTable)
+        table.delete(statsTable)
+
+    // Create new table with 2 columns and 10 rows
+    statsTable := table.new(tablePos, 2, 12,
+                            bgcolor = color.new(color.black, 30),
+                            border_width = 1,
+                            border_color = color.gray)
+
+    // Header row
+    table.cell(statsTable, 0, 0, "SWING TRACES STATS",
+               text_color = color.white, text_size = size.small, bgcolor = color.new(color.blue, 50))
+    table.merge_cells(statsTable, 0, 0, 1, 0)
+
+    // Total Signals
+    table.cell(statsTable, 0, 1, "Total Signals", text_color = color.white, text_size = size.tiny)
+    table.cell(statsTable, 1, 1, str.tostring(totalSignals), text_color = color.yellow, text_size = size.tiny)
+
+    // Long Signals
+    table.cell(statsTable, 0, 2, "Long Signals", text_color = color.white, text_size = size.tiny)
+    table.cell(statsTable, 1, 2, str.tostring(totalLongSignals), text_color = signalLongColor, text_size = size.tiny)
+
+    // Short Signals
+    table.cell(statsTable, 0, 3, "Short Signals", text_color = color.white, text_size = size.tiny)
+    table.cell(statsTable, 1, 3, str.tostring(totalShortSignals), text_color = signalShortColor, text_size = size.tiny)
+
+    // Separator
+    table.cell(statsTable, 0, 4, "─────────────", text_color = color.gray, text_size = size.tiny)
+    table.cell(statsTable, 1, 4, "─────────", text_color = color.gray, text_size = size.tiny)
+
+    // Total Wins
+    table.cell(statsTable, 0, 5, "Total Wins", text_color = color.white, text_size = size.tiny)
+    table.cell(statsTable, 1, 5, str.tostring(totalWins), text_color = color.green, text_size = size.tiny)
+
+    // Total Losses
+    table.cell(statsTable, 0, 6, "Total Losses", text_color = color.white, text_size = size.tiny)
+    table.cell(statsTable, 1, 6, str.tostring(totalLosses), text_color = color.red, text_size = size.tiny)
+
+    // Win Rate
+    table.cell(statsTable, 0, 7, "Win Rate", text_color = color.white, text_size = size.tiny)
+    winRateColor = winRate >= 50 ? color.green : color.red
+    table.cell(statsTable, 1, 7, str.tostring(winRate, "#.#") + "%", text_color = winRateColor, text_size = size.tiny)
+
+    // Long Win Rate
+    table.cell(statsTable, 0, 8, "Long Win Rate", text_color = color.white, text_size = size.tiny)
+    longWinRateColor = longWinRate >= 50 ? color.green : color.red
+    table.cell(statsTable, 1, 8, str.tostring(longWinRate, "#.#") + "%", text_color = longWinRateColor, text_size = size.tiny)
+
+    // Short Win Rate
+    table.cell(statsTable, 0, 9, "Short Win Rate", text_color = color.white, text_size = size.tiny)
+    shortWinRateColor = shortWinRate >= 50 ? color.green : color.red
+    table.cell(statsTable, 1, 9, str.tostring(shortWinRate, "#.#") + "%", text_color = shortWinRateColor, text_size = size.tiny)
+
+    // R:R Ratio
+    table.cell(statsTable, 0, 10, "Risk:Reward", text_color = color.white, text_size = size.tiny)
+    table.cell(statsTable, 1, 10, "1:" + str.tostring(riskRewardRatio, "#.#"), text_color = color.yellow, text_size = size.tiny)
+
+    // Active Trades
+    activeTradesText = (inLongTrade ? "L" : "") + (inShortTrade ? "S" : "")
+    if activeTradesText == ""
+        activeTradesText := "None"
+    table.cell(statsTable, 0, 11, "Active Trades", text_color = color.white, text_size = size.tiny)
+    table.cell(statsTable, 1, 11, activeTradesText, text_color = color.aqua, text_size = size.tiny)
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 13: ALERTS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Alert Conditions ---
+alertcondition(longSignal, title="Long Signal", message="Swing Traces: LONG signal detected at {{close}}")
+alertcondition(shortSignal, title="Short Signal", message="Swing Traces: SHORT signal detected at {{close}}")
+alertcondition(longSignal or shortSignal, title="Any Signal", message="Swing Traces: Signal detected at {{close}}")
+alertcondition(upperSwingConfirmed, title="New Upper Swing", message="Swing Traces: New upper swing confirmed at {{high}}")
+alertcondition(lowerSwingConfirmed, title="New Lower Swing", message="Swing Traces: New lower swing confirmed at {{low}}")
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  END OF SCRIPT  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════

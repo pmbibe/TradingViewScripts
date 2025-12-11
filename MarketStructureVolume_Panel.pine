@@ -1,0 +1,232 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// Market Structure & Volume Analysis - Volume Panel (Subplot)
+// Use this indicator in a separate pane below the main chart
+
+//@version=5
+indicator("MS & Volume - Volume Panel", "MS Volume Panel", format = format.volume)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 1: INPUT SETTINGS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Volume Settings ---
+string GROUP_VOLUME = "═══ Volume Settings ═══"
+volumeMALength      = input.int(20, "Volume MA Length (Fast)", minval = 5, maxval = 100, group = GROUP_VOLUME)
+volumeMALength2     = input.int(50, "Volume MA Length (Slow)", minval = 10, maxval = 200, group = GROUP_VOLUME)
+volumeSpikeThresh   = input.float(2.0, "Volume Spike Threshold", minval = 1.2, maxval = 5.0, step = 0.1, group = GROUP_VOLUME,
+                      tooltip = "Volume ratio above this = Volume Spike (2x line)")
+volumeClimaxThresh  = input.float(3.0, "Volume Climax Threshold", minval = 2.0, maxval = 10.0, step = 0.1, group = GROUP_VOLUME,
+                      tooltip = "Volume ratio above this = Volume Climax (3x line)")
+
+// --- Color Settings ---
+string GROUP_COLORS = "═══ Colors ═══"
+colorBullHighVol    = input.color(#00C853, "Bullish High Volume", group = GROUP_COLORS)
+colorBullLowVol     = input.color(#B9F6CA, "Bullish Low Volume", group = GROUP_COLORS)
+colorBearHighVol    = input.color(#D50000, "Bearish High Volume", group = GROUP_COLORS)
+colorBearLowVol     = input.color(#FFCDD2, "Bearish Low Volume", group = GROUP_COLORS)
+colorVolumeClimax   = input.color(#FFD600, "Volume Climax", group = GROUP_COLORS)
+colorMA1            = input.color(#2196F3, "MA Fast Color", group = GROUP_COLORS)
+colorMA2            = input.color(#9C27B0, "MA Slow Color", group = GROUP_COLORS)
+colorSpikeLevel     = input.color(color.new(#FF9800, 50), "Spike Level (2x)", group = GROUP_COLORS)
+colorClimaxLevel    = input.color(color.new(#F44336, 50), "Climax Level (3x)", group = GROUP_COLORS)
+
+// --- Display Settings ---
+string GROUP_DISPLAY = "═══ Display ═══"
+showMA1             = input.bool(true, "Show Fast MA", group = GROUP_DISPLAY)
+showMA2             = input.bool(true, "Show Slow MA", group = GROUP_DISPLAY)
+showSpikeLevel      = input.bool(true, "Show 2x MA Level", group = GROUP_DISPLAY)
+showClimaxLevel     = input.bool(true, "Show 3x MA Level", group = GROUP_DISPLAY)
+showVolumeRatio     = input.bool(true, "Show Volume Ratio Label", group = GROUP_DISPLAY)
+showPhaseInfo       = input.bool(true, "Show Phase/Trend Info", group = GROUP_DISPLAY)
+highlightClimax     = input.bool(true, "Highlight Climax Bars", group = GROUP_DISPLAY)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 2: VOLUME CALCULATIONS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Volume Moving Averages ---
+volumeMA1 = ta.sma(volume, volumeMALength)
+volumeMA2 = ta.sma(volume, volumeMALength2)
+
+// --- Volume Ratio ---
+volumeRatio = volumeMA1 > 0 ? volume / volumeMA1 : 0
+
+// --- Volume Conditions ---
+isVolumeSpike = volumeRatio >= volumeSpikeThresh
+isVolumeClimax = volumeRatio >= volumeClimaxThresh
+isHighVolume = volume > volumeMA1
+isLowVolume = volume <= volumeMA1
+
+// --- Price Direction ---
+isBullishBar = close > open
+isBearishBar = close < open
+
+// --- Threshold Lines ---
+spikeLevel = volumeMA1 * volumeSpikeThresh
+climaxLevel = volumeMA1 * volumeClimaxThresh
+
+// --- Volume Bar Color ---
+volumeBarColor = isVolumeClimax ? colorVolumeClimax :
+                 isBullishBar and isHighVolume ? colorBullHighVol :
+                 isBullishBar and isLowVolume ? colorBullLowVol :
+                 isBearishBar and isHighVolume ? colorBearHighVol :
+                 isBearishBar and isLowVolume ? colorBearLowVol :
+                 color.gray
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 3: MARKET STRUCTURE SYNC (Optional - for info display)  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Simple Trend Detection for Panel ---
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+trendUp = ema20 > ema50
+trendDown = ema20 < ema50
+
+// --- ATR for Phase Detection ---
+atrValue = ta.atr(14)
+atrMA = ta.sma(atrValue, 14)
+isLowATR = atrValue < atrMA
+
+// --- Simple Phase Estimation ---
+rollingHigh = ta.highest(high, 10)
+rollingLow = ta.lowest(low, 10)
+rangePercent = ((rollingHigh - rollingLow) / rollingLow) * 100
+
+isAccumulating = isLowATR and volumeRatio < 1.2 and rangePercent < 5
+isDistributing = isVolumeClimax and not trendUp
+
+phaseText = isAccumulating ? "Accumulation" :
+            isDistributing ? "Distribution" :
+            trendUp ? "Markup" :
+            trendDown ? "Markdown" : "Neutral"
+
+trendText = trendUp ? "Uptrend" : trendDown ? "Downtrend" : "Sideways"
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 4: PLOTTING  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Volume Histogram ---
+plot(volume, "Volume", volumeBarColor, style = plot.style_columns)
+
+// --- Volume MAs ---
+plot(showMA1 ? volumeMA1 : na, "Volume MA (Fast)", colorMA1, 2)
+plot(showMA2 ? volumeMA2 : na, "Volume MA (Slow)", colorMA2, 2)
+
+// --- Threshold Levels ---
+plot(showSpikeLevel ? spikeLevel : na, "2x MA Level", colorSpikeLevel, 1, plot.style_stepline)
+plot(showClimaxLevel ? climaxLevel : na, "3x MA Level", colorClimaxLevel, 1, plot.style_stepline)
+
+// --- Highlight Climax Bars with Background ---
+bgcolor(highlightClimax and isVolumeClimax ? color.new(colorVolumeClimax, 80) : na, title = "Climax Highlight")
+
+// --- Highlight Spike Bars ---
+bgcolor(highlightClimax and isVolumeSpike and not isVolumeClimax ? color.new(#FF9800, 90) : na, title = "Spike Highlight")
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 5: LABELS & INFO  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Volume Climax Label ---
+if isVolumeClimax
+    label.new(bar_index, volume, "CLIMAX\n" + str.tostring(volumeRatio, "#.#") + "x",
+              xloc.bar_index, yloc.price, colorVolumeClimax, label.style_label_down, color.black, size.tiny)
+
+// --- Volume Spike Label ---
+else if isVolumeSpike
+    label.new(bar_index, volume, str.tostring(volumeRatio, "#.#") + "x",
+              xloc.bar_index, yloc.price, color.new(#FF9800, 30), label.style_label_down, color.white, size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 6: INFO TABLE  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+var table infoTable = na
+
+if (showVolumeRatio or showPhaseInfo) and barstate.islast
+    if not na(infoTable)
+        table.delete(infoTable)
+
+    rows = 0
+    if showVolumeRatio
+        rows += 1
+    if showPhaseInfo
+        rows += 2
+
+    infoTable := table.new(position.top_right, 2, rows + 1,
+                           bgcolor = color.new(color.black, 30),
+                           border_width = 1,
+                           border_color = color.gray)
+
+    // Header
+    table.cell(infoTable, 0, 0, "VOLUME ANALYSIS",
+               text_color = color.white, text_size = size.tiny, bgcolor = color.new(color.blue, 50))
+    table.merge_cells(infoTable, 0, 0, 1, 0)
+
+    currentRow = 1
+
+    // Volume Ratio
+    if showVolumeRatio
+        ratioColor = isVolumeClimax ? colorVolumeClimax :
+                     isVolumeSpike ? color.orange :
+                     isHighVolume ? color.green : color.gray
+        ratioText = str.tostring(volumeRatio, "#.##") + "x"
+        if isVolumeClimax
+            ratioText += " CLIMAX"
+        else if isVolumeSpike
+            ratioText += " SPIKE"
+
+        table.cell(infoTable, 0, currentRow, "Vol Ratio", text_color = color.white, text_size = size.tiny)
+        table.cell(infoTable, 1, currentRow, ratioText, text_color = ratioColor, text_size = size.tiny)
+        currentRow += 1
+
+    // Phase & Trend Info
+    if showPhaseInfo
+        phaseColor = phaseText == "Accumulation" ? color.blue :
+                     phaseText == "Distribution" ? color.orange :
+                     phaseText == "Markup" ? color.green :
+                     phaseText == "Markdown" ? color.red : color.gray
+
+        trendColor = trendUp ? color.green : trendDown ? color.red : color.gray
+
+        table.cell(infoTable, 0, currentRow, "Phase", text_color = color.white, text_size = size.tiny)
+        table.cell(infoTable, 1, currentRow, phaseText, text_color = phaseColor, text_size = size.tiny)
+        currentRow += 1
+
+        table.cell(infoTable, 0, currentRow, "Trend", text_color = color.white, text_size = size.tiny)
+        table.cell(infoTable, 1, currentRow, trendText, text_color = trendColor, text_size = size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 7: ALERTS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Volume Climax Alert ---
+alertcondition(isVolumeClimax,
+               title = "Volume Climax",
+               message = "Volume Panel: Volume CLIMAX detected - " + str.tostring(volumeRatio, "#.#") + "x average")
+
+// --- Volume Spike Alert ---
+alertcondition(isVolumeSpike and not isVolumeClimax,
+               title = "Volume Spike",
+               message = "Volume Panel: Volume SPIKE detected - " + str.tostring(volumeRatio, "#.#") + "x average")
+
+// --- High Volume Bullish ---
+alertcondition(isBullishBar and isHighVolume and not isVolumeSpike,
+               title = "Bullish High Volume",
+               message = "Volume Panel: High volume bullish bar")
+
+// --- High Volume Bearish ---
+alertcondition(isBearishBar and isHighVolume and not isVolumeSpike,
+               title = "Bearish High Volume",
+               message = "Volume Panel: High volume bearish bar")
+
+// --- Volume Declining (below both MAs) ---
+alertcondition(volume < volumeMA1 and volume < volumeMA2,
+               title = "Volume Declining",
+               message = "Volume Panel: Volume below both moving averages - declining interest")
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  END OF INDICATOR  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════

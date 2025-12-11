@@ -1,0 +1,865 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// Market Structure & Volume Analysis Indicator
+// Professional trading tool for identifying market phases and generating signals
+
+//@version=5
+indicator("Market Structure & Volume Analysis", "MS & Volume", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 1: CONSTANTS & COLORS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Trend Direction Constants ---
+int BULLISH = 1
+int BEARISH = -1
+int NEUTRAL = 0
+
+// --- Market Phase Constants ---
+int PHASE_UNKNOWN = 0
+int PHASE_ACCUMULATION = 1
+int PHASE_MARKUP = 2
+int PHASE_DISTRIBUTION = 3
+int PHASE_MARKDOWN = 4
+
+// --- Default Colors ---
+color COLOR_BULLISH = #089981
+color COLOR_BEARISH = #F23645
+color COLOR_NEUTRAL = #787B86
+color COLOR_HH = #00E676
+color COLOR_HL = #69F0AE
+color COLOR_LH = #FF5252
+color COLOR_LL = #FF8A80
+color COLOR_ACCUMULATION = color.new(#2196F3, 85)
+color COLOR_MARKUP = color.new(#4CAF50, 90)
+color COLOR_DISTRIBUTION = color.new(#FFC107, 85)
+color COLOR_MARKDOWN = color.new(#F44336, 90)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 2: INPUT SETTINGS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Market Structure Settings ---
+string GROUP_STRUCTURE = "═══ Market Structure ═══"
+swingLookback           = input.int(5, "Swing Lookback Period", minval = 2, maxval = 50, group = GROUP_STRUCTURE,
+                          tooltip = "Number of bars to identify swing highs/lows")
+showSwingLabels         = input.bool(true, "Show HH/HL/LH/LL Labels", group = GROUP_STRUCTURE)
+showSwingLines          = input.bool(true, "Show Structure Lines", group = GROUP_STRUCTURE)
+swingLineStyle          = input.string("Solid", "Line Style", options = ["Solid", "Dashed", "Dotted"], group = GROUP_STRUCTURE)
+hhColor                 = input.color(COLOR_HH, "HH Color", group = GROUP_STRUCTURE)
+hlColor                 = input.color(COLOR_HL, "HL Color", group = GROUP_STRUCTURE)
+lhColor                 = input.color(COLOR_LH, "LH Color", group = GROUP_STRUCTURE)
+llColor                 = input.color(COLOR_LL, "LL Color", group = GROUP_STRUCTURE)
+
+// --- Volume Analysis Settings ---
+string GROUP_VOLUME = "═══ Volume Analysis ═══"
+volumeMALength          = input.int(20, "Volume MA Length", minval = 5, maxval = 100, group = GROUP_VOLUME)
+volumeMALength2         = input.int(50, "Volume MA Length 2", minval = 10, maxval = 200, group = GROUP_VOLUME)
+volumeSpikeThreshold    = input.float(2.0, "Volume Spike Threshold", minval = 1.2, maxval = 5.0, step = 0.1, group = GROUP_VOLUME,
+                          tooltip = "Volume ratio above this = Volume Spike")
+volumeClimaxThreshold   = input.float(3.0, "Volume Climax Threshold", minval = 2.0, maxval = 10.0, step = 0.1, group = GROUP_VOLUME,
+                          tooltip = "Volume ratio above this = Volume Climax")
+showVolumeColors        = input.bool(true, "Color Bars by Volume", group = GROUP_VOLUME)
+colorBullHighVol        = input.color(#00C853, "Bullish High Volume", group = GROUP_VOLUME)
+colorBullLowVol         = input.color(#B9F6CA, "Bullish Low Volume", group = GROUP_VOLUME)
+colorBearHighVol        = input.color(#D50000, "Bearish High Volume", group = GROUP_VOLUME)
+colorBearLowVol         = input.color(#FFCDD2, "Bearish Low Volume", group = GROUP_VOLUME)
+colorVolumeClimax       = input.color(#FFD600, "Volume Climax", group = GROUP_VOLUME)
+
+// --- Volume Divergence Settings ---
+string GROUP_DIVERGENCE = "═══ Volume Divergence ═══"
+showVolumeDivergence    = input.bool(true, "Show Volume Divergence", group = GROUP_DIVERGENCE)
+divLookback             = input.int(10, "Divergence Lookback", minval = 3, maxval = 30, group = GROUP_DIVERGENCE)
+divBgColor              = input.color(color.new(#FF9800, 90), "Divergence Background", group = GROUP_DIVERGENCE)
+
+// --- Market Phase Settings ---
+string GROUP_PHASES = "═══ Market Phases ═══"
+showPhases              = input.bool(true, "Show Market Phases", group = GROUP_PHASES)
+atrPeriod               = input.int(14, "ATR Period", minval = 5, maxval = 50, group = GROUP_PHASES)
+accRangePercent         = input.float(5.0, "Accumulation Range %", minval = 1.0, maxval = 15.0, step = 0.5, group = GROUP_PHASES,
+                          tooltip = "Price range must be less than this % for accumulation")
+accMinBars              = input.int(10, "Accumulation Min Bars", minval = 5, maxval = 50, group = GROUP_PHASES,
+                          tooltip = "Minimum consecutive bars for accumulation phase")
+phaseMinSwings          = input.int(3, "Min Swings for Trend Phase", minval = 2, maxval = 10, group = GROUP_PHASES,
+                          tooltip = "Minimum consecutive HH/HL or LH/LL for markup/markdown")
+showPhaseLabels         = input.bool(true, "Show Phase Labels", group = GROUP_PHASES)
+showPhaseBackground     = input.bool(true, "Show Phase Background", group = GROUP_PHASES)
+showPhaseBoxes          = input.bool(true, "Show Range Boxes", group = GROUP_PHASES)
+
+// --- Trading Signals Settings ---
+string GROUP_SIGNALS = "═══ Trading Signals ═══"
+showBuySignals          = input.bool(true, "Show BUY Signals", group = GROUP_SIGNALS)
+showSellSignals         = input.bool(true, "Show SELL Signals", group = GROUP_SIGNALS)
+showShortSignals        = input.bool(false, "Show SHORT Signals", group = GROUP_SIGNALS)
+signalConfirmBars       = input.int(1, "Signal Confirmation Bars", minval = 1, maxval = 5, group = GROUP_SIGNALS,
+                          tooltip = "Bars to confirm signal (1 = bar close)")
+showEarlySignals        = input.bool(false, "Show Early Signals (Unconfirmed)", group = GROUP_SIGNALS,
+                          tooltip = "Show signals before bar close - may repaint")
+
+// --- Dashboard Settings ---
+string GROUP_DASHBOARD = "═══ Dashboard ═══"
+showDashboard           = input.bool(true, "Show Dashboard", group = GROUP_DASHBOARD)
+dashboardPosition       = input.string("Top Right", "Position",
+                          options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = GROUP_DASHBOARD)
+dashboardSize           = input.string("Normal", "Size", options = ["Tiny", "Small", "Normal"], group = GROUP_DASHBOARD)
+
+// --- Support/Resistance Settings ---
+string GROUP_SR = "═══ Support/Resistance ═══"
+showSupportResistance   = input.bool(true, "Show S/R Levels", group = GROUP_SR)
+srLookback              = input.int(50, "S/R Lookback", minval = 20, maxval = 200, group = GROUP_SR)
+srStrengthMin           = input.int(2, "Min Touches for S/R", minval = 1, maxval = 10, group = GROUP_SR)
+
+// --- Alert Settings ---
+string GROUP_ALERTS = "═══ Alerts ═══"
+alertAccumulation       = input.bool(true, "Alert: Accumulation Start", group = GROUP_ALERTS)
+alertMarkupBreakout     = input.bool(true, "Alert: Markup Breakout", group = GROUP_ALERTS)
+alertDistribution       = input.bool(true, "Alert: Distribution Start", group = GROUP_ALERTS)
+alertMarkdownBreakdown  = input.bool(true, "Alert: Markdown Breakdown", group = GROUP_ALERTS)
+alertVolumeClimax       = input.bool(true, "Alert: Volume Climax", group = GROUP_ALERTS)
+alertStructureBreak     = input.bool(true, "Alert: Structure Break", group = GROUP_ALERTS)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 3: DATA STRUCTURES  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Swing Point Type ---
+type SwingPoint
+    float price
+    int barIdx
+    int barTime
+    bool isHigh
+    string label  // HH, HL, LH, LL
+
+// --- Market Phase Info ---
+type PhaseInfo
+    int phase
+    int startBar
+    float rangeHigh
+    float rangeLow
+    int swingCount
+
+// --- Signal Type ---
+type TradeSignal
+    string signalType  // BUY, SELL, SHORT
+    float price
+    int barIdx
+    string reason
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 4: GLOBAL VARIABLES  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Swing Point Storage ---
+var array<SwingPoint> swingHighs = array.new<SwingPoint>()
+var array<SwingPoint> swingLows = array.new<SwingPoint>()
+var SwingPoint lastSwingHigh = na
+var SwingPoint lastSwingLow = na
+var SwingPoint prevSwingHigh = na
+var SwingPoint prevSwingLow = na
+
+// --- Trend Tracking ---
+var int currentTrend = NEUTRAL
+var int consecutiveHH = 0
+var int consecutiveHL = 0
+var int consecutiveLH = 0
+var int consecutiveLL = 0
+
+// --- Market Phase Tracking ---
+var int currentPhase = PHASE_UNKNOWN
+var int phaseStartBar = 0
+var float phaseRangeHigh = na
+var float phaseRangeLow = na
+var int accumulationBars = 0
+var int distributionBars = 0
+
+// --- Volume Analysis ---
+var float lastSwingHighVolume = na
+var float lastSwingLowVolume = na
+
+// --- Signal Tracking ---
+var string lastSignal = "NONE"
+var int lastSignalBar = 0
+
+// --- Line/Label Arrays for Drawing ---
+var array<line> structureLines = array.new_line()
+var array<label> structureLabels = array.new_label()
+var array<box> phaseBoxes = array.new_box()
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 5: VOLUME CALCULATIONS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Volume Moving Averages ---
+volumeMA = ta.sma(volume, volumeMALength)
+volumeMA2 = ta.sma(volume, volumeMALength2)
+
+// --- Volume Ratio ---
+volumeRatio = volumeMA > 0 ? volume / volumeMA : 0
+
+// --- Volume Conditions ---
+isVolumeSpike = volumeRatio >= volumeSpikeThreshold
+isVolumeClimax = volumeRatio >= volumeClimaxThreshold
+isHighVolume = volume > volumeMA
+isLowVolume = volume <= volumeMA
+
+// --- Price Direction ---
+isBullishBar = close > open
+isBearishBar = close < open
+
+// --- Volume Bar Colors ---
+volumeBarColor = isVolumeClimax ? colorVolumeClimax :
+                 isBullishBar and isHighVolume ? colorBullHighVol :
+                 isBullishBar and isLowVolume ? colorBullLowVol :
+                 isBearishBar and isHighVolume ? colorBearHighVol :
+                 isBearishBar and isLowVolume ? colorBearLowVol :
+                 COLOR_NEUTRAL
+
+// --- ATR Calculation ---
+atrValue = ta.atr(atrPeriod)
+atrMA = ta.sma(atrValue, atrPeriod)
+isLowATR = atrValue < atrMA
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 6: SWING POINT DETECTION (NON-REPAINTING)  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Get Line Style ---
+getLineStyle(string style) =>
+    switch style
+        "Solid" => line.style_solid
+        "Dashed" => line.style_dashed
+        "Dotted" => line.style_dotted
+        => line.style_solid
+
+// --- Pivot Detection (Confirmed - No Repaint) ---
+// Using offset to ensure we only detect confirmed pivots
+pivotHighPrice = ta.pivothigh(high, swingLookback, swingLookback)
+pivotLowPrice = ta.pivotlow(low, swingLookback, swingLookback)
+
+isPivotHigh = not na(pivotHighPrice)
+isPivotLow = not na(pivotLowPrice)
+
+// --- Calculate Swing Volume (average volume around swing point) ---
+swingVolumeHigh = isPivotHigh ? ta.sma(volume, swingLookback)[swingLookback] : na
+swingVolumeLow = isPivotLow ? ta.sma(volume, swingLookback)[swingLookback] : na
+
+// --- Process New Swing High ---
+var string swingHighLabel = ""
+var bool isNewHH = false
+var bool isNewLH = false
+
+if isPivotHigh
+    // Determine if HH or LH
+    isHH = na(prevSwingHigh) or pivotHighPrice > prevSwingHigh.price
+    isLH = not na(prevSwingHigh) and pivotHighPrice < prevSwingHigh.price
+
+    swingHighLabel := isHH ? "HH" : "LH"
+    isNewHH := isHH
+    isNewLH := isLH
+
+    // Update consecutive counts
+    if isHH
+        consecutiveHH += 1
+        consecutiveLH := 0
+    else
+        consecutiveLH += 1
+        consecutiveHH := 0
+
+    // Store previous swing
+    prevSwingHigh := lastSwingHigh
+
+    // Create new swing point
+    newSwing = SwingPoint.new(pivotHighPrice, bar_index - swingLookback, time[swingLookback], true, swingHighLabel)
+    lastSwingHigh := newSwing
+    lastSwingHighVolume := swingVolumeHigh
+
+    // Add to array (limit size to prevent memory issues)
+    if array.size(swingHighs) >= 100
+        array.shift(swingHighs)
+    array.push(swingHighs, newSwing)
+
+    // Draw label
+    if showSwingLabels
+        labelColor = isHH ? hhColor : lhColor
+        labelStyle = label.style_label_down
+        label.new(bar_index - swingLookback, pivotHighPrice, swingHighLabel,
+                  xloc.bar_index, yloc.price, labelColor, labelStyle, color.white, size.small)
+
+    // Draw structure line
+    if showSwingLines and not na(prevSwingHigh)
+        lineColor = isHH ? hhColor : lhColor
+        line.new(prevSwingHigh.barIdx, prevSwingHigh.price, bar_index - swingLookback, pivotHighPrice,
+                 xloc.bar_index, extend.none, lineColor, getLineStyle(swingLineStyle), 2)
+
+// --- Process New Swing Low ---
+var string swingLowLabel = ""
+var bool isNewHL = false
+var bool isNewLL = false
+
+if isPivotLow
+    // Determine if HL or LL
+    isHL = na(prevSwingLow) or pivotLowPrice > prevSwingLow.price
+    isLL = not na(prevSwingLow) and pivotLowPrice < prevSwingLow.price
+
+    swingLowLabel := isHL ? "HL" : "LL"
+    isNewHL := isHL
+    isNewLL := isLL
+
+    // Update consecutive counts
+    if isHL
+        consecutiveHL += 1
+        consecutiveLL := 0
+    else
+        consecutiveLL += 1
+        consecutiveHL := 0
+
+    // Store previous swing
+    prevSwingLow := lastSwingLow
+
+    // Create new swing point
+    newSwing = SwingPoint.new(pivotLowPrice, bar_index - swingLookback, time[swingLookback], false, swingLowLabel)
+    lastSwingLow := newSwing
+    lastSwingLowVolume := swingVolumeLow
+
+    // Add to array
+    if array.size(swingLows) >= 100
+        array.shift(swingLows)
+    array.push(swingLows, newSwing)
+
+    // Draw label
+    if showSwingLabels
+        labelColor = isHL ? hlColor : llColor
+        labelStyle = label.style_label_up
+        label.new(bar_index - swingLookback, pivotLowPrice, swingLowLabel,
+                  xloc.bar_index, yloc.price, labelColor, labelStyle, color.white, size.small)
+
+    // Draw structure line
+    if showSwingLines and not na(prevSwingLow)
+        lineColor = isHL ? hlColor : llColor
+        line.new(prevSwingLow.barIdx, prevSwingLow.price, bar_index - swingLookback, pivotLowPrice,
+                 xloc.bar_index, extend.none, lineColor, getLineStyle(swingLineStyle), 2)
+
+// --- Trend Direction Based on Swings ---
+if consecutiveHH >= 2 and consecutiveHL >= 2
+    currentTrend := BULLISH
+else if consecutiveLH >= 2 and consecutiveLL >= 2
+    currentTrend := BEARISH
+else
+    currentTrend := NEUTRAL
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 7: VOLUME DIVERGENCE DETECTION  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Bullish Volume Divergence (Price LL but Volume not increasing) ---
+// Price making lower lows but volume is decreasing
+bullishVolumeDivergence = false
+if showVolumeDivergence and isNewLL and not na(lastSwingLowVolume) and not na(prevSwingLow)
+    if pivotLowPrice < prevSwingLow.price
+        // Check if volume at current low is less than at previous low
+        prevLowVolume = ta.sma(volume, swingLookback)[swingLookback * 2]
+        if lastSwingLowVolume < prevLowVolume * 0.8
+            bullishVolumeDivergence := true
+
+// --- Bearish Volume Divergence (Price HH but Volume decreasing) ---
+bearishVolumeDivergence = false
+if showVolumeDivergence and isNewHH and not na(lastSwingHighVolume) and not na(prevSwingHigh)
+    if pivotHighPrice > prevSwingHigh.price
+        // Check if volume at current high is less than at previous high
+        prevHighVolume = ta.sma(volume, swingLookback)[swingLookback * 2]
+        if lastSwingHighVolume < prevHighVolume * 0.8
+            bearishVolumeDivergence := true
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 8: MARKET PHASE DETECTION  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Calculate Rolling Range ---
+rollingHigh = ta.highest(high, accMinBars)
+rollingLow = ta.lowest(low, accMinBars)
+rollingRange = rollingHigh - rollingLow
+rangePercent = (rollingRange / rollingLow) * 100
+
+// --- Accumulation Detection ---
+// Low ATR + Low volume + Tight range + No volume spikes
+isAccumulationCondition = isLowATR and
+                          volumeRatio < 1.2 and
+                          rangePercent < accRangePercent and
+                          not isVolumeSpike
+
+// --- Track Accumulation Bars ---
+if isAccumulationCondition
+    accumulationBars += 1
+else
+    accumulationBars := 0
+
+// --- Markup Detection ---
+// Breakout from accumulation + Volume spike + HH/HL pattern
+isMarkupCondition = (consecutiveHH >= phaseMinSwings or consecutiveHL >= phaseMinSwings) and
+                    currentTrend == BULLISH and
+                    (isVolumeSpike or close > rollingHigh[1])
+
+// --- Distribution Detection ---
+// Volume climax at highs + Price failing to make new highs + Red volume bars
+isDistributionCondition = (isVolumeClimax or volumeRatio > volumeSpikeThreshold) and
+                          (consecutiveLH >= 1 or (not na(lastSwingHigh) and close < lastSwingHigh.price)) and
+                          isBearishBar and isHighVolume
+
+// --- Track Distribution Bars ---
+if isDistributionCondition
+    distributionBars += 1
+else
+    distributionBars := math.max(0, distributionBars - 1)
+
+// --- Markdown Detection ---
+// Breakdown + Volume spike + LH/LL pattern
+isMarkdownCondition = (consecutiveLH >= phaseMinSwings or consecutiveLL >= phaseMinSwings) and
+                      currentTrend == BEARISH and
+                      (isVolumeSpike or close < rollingLow[1])
+
+// --- Phase State Machine ---
+var int prevPhase = PHASE_UNKNOWN
+prevPhase := currentPhase
+
+// Accumulation Phase
+if accumulationBars >= accMinBars and currentPhase != PHASE_MARKUP
+    if currentPhase != PHASE_ACCUMULATION
+        currentPhase := PHASE_ACCUMULATION
+        phaseStartBar := bar_index - accMinBars
+        phaseRangeHigh := rollingHigh
+        phaseRangeLow := rollingLow
+
+// Markup Phase (breakout from accumulation)
+if isMarkupCondition and (currentPhase == PHASE_ACCUMULATION or currentPhase == PHASE_UNKNOWN)
+    if currentPhase != PHASE_MARKUP
+        currentPhase := PHASE_MARKUP
+        phaseStartBar := bar_index
+
+// Distribution Phase
+if distributionBars >= 3 and currentPhase == PHASE_MARKUP
+    if currentPhase != PHASE_DISTRIBUTION
+        currentPhase := PHASE_DISTRIBUTION
+        phaseStartBar := bar_index
+        phaseRangeHigh := ta.highest(high, distributionBars)
+        phaseRangeLow := ta.lowest(low, distributionBars)
+
+// Markdown Phase (breakdown from distribution)
+if isMarkdownCondition and (currentPhase == PHASE_DISTRIBUTION or currentPhase == PHASE_MARKUP)
+    if currentPhase != PHASE_MARKDOWN
+        currentPhase := PHASE_MARKDOWN
+        phaseStartBar := bar_index
+
+// --- Phase Change Detection ---
+phaseJustChanged = currentPhase != prevPhase
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 9: TRADING SIGNALS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Confirmed Bar Check ---
+isConfirmedBar = barstate.isconfirmed or showEarlySignals
+
+// --- BUY Signal Conditions ---
+// 1. In accumulation phase + increasing green volume
+buyCondition1 = currentPhase == PHASE_ACCUMULATION and
+                isBullishBar and
+                volume > volume[1] and
+                isConfirmedBar
+
+// 2. Breakout from accumulation + volume spike
+buyCondition2 = prevPhase == PHASE_ACCUMULATION and
+                currentPhase == PHASE_MARKUP and
+                isVolumeSpike and
+                isConfirmedBar
+
+// 3. Pullback in uptrend + low volume + at support (HL)
+buyCondition3 = currentTrend == BULLISH and
+                isNewHL and
+                isLowVolume and
+                not na(lastSwingLow) and
+                close > lastSwingLow.price and
+                isConfirmedBar
+
+buySignal = showBuySignals and (buyCondition1 or buyCondition2 or buyCondition3)
+
+// --- SELL/EXIT Signal Conditions ---
+// 1. Enter distribution phase
+sellCondition1 = currentPhase == PHASE_DISTRIBUTION and
+                 prevPhase == PHASE_MARKUP and
+                 isConfirmedBar
+
+// 2. Volume climax + price not rising
+sellCondition2 = isVolumeClimax and
+                 (close < open or close < close[1]) and
+                 currentPhase != PHASE_MARKDOWN and
+                 isConfirmedBar
+
+// 3. Structure break (first LH after uptrend)
+sellCondition3 = currentTrend == BULLISH and
+                 isNewLH and
+                 consecutiveLH == 1 and
+                 consecutiveHH >= 2 and
+                 isConfirmedBar
+
+sellSignal = showSellSignals and (sellCondition1 or sellCondition2 or sellCondition3)
+
+// --- SHORT Signal Conditions ---
+// 1. Breakdown from distribution + volume spike
+shortCondition1 = currentPhase == PHASE_MARKDOWN and
+                  prevPhase == PHASE_DISTRIBUTION and
+                  isVolumeSpike and
+                  isConfirmedBar
+
+// 2. Retest failed in markdown phase
+shortCondition2 = currentPhase == PHASE_MARKDOWN and
+                  isNewLH and
+                  isBearishBar and
+                  isHighVolume and
+                  isConfirmedBar
+
+shortSignal = showShortSignals and (shortCondition1 or shortCondition2)
+
+// --- Prevent Duplicate Signals ---
+buySignalFiltered = buySignal and bar_index > lastSignalBar + 5
+sellSignalFiltered = sellSignal and bar_index > lastSignalBar + 5
+shortSignalFiltered = shortSignal and bar_index > lastSignalBar + 5
+
+// --- Update Last Signal ---
+if buySignalFiltered
+    lastSignal := "BUY"
+    lastSignalBar := bar_index
+if sellSignalFiltered
+    lastSignal := "SELL"
+    lastSignalBar := bar_index
+if shortSignalFiltered
+    lastSignal := "SHORT"
+    lastSignalBar := bar_index
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 10: SUPPORT/RESISTANCE DETECTION  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Find Support/Resistance from Swing Points ---
+var float nearestResistance = na
+var float nearestSupport = na
+
+if showSupportResistance
+    // Find nearest resistance (swing high above current price)
+    if array.size(swingHighs) > 0
+        for i = array.size(swingHighs) - 1 to 0
+            sh = array.get(swingHighs, i)
+            if sh.price > close
+                nearestResistance := sh.price
+                break
+
+    // Find nearest support (swing low below current price)
+    if array.size(swingLows) > 0
+        for i = array.size(swingLows) - 1 to 0
+            sl = array.get(swingLows, i)
+            if sl.price < close
+                nearestSupport := sl.price
+                break
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 11: TREND STRENGTH METER  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Calculate Trend Strength (1-10 scale) ---
+trendStrength = 0.0
+
+// Factor 1: Consecutive swings (max 3 points)
+swingScore = math.min(3, (consecutiveHH + consecutiveHL + consecutiveLH + consecutiveLL) / 2)
+
+// Factor 2: ATR relative to average (max 2 points)
+atrScore = atrValue > atrMA ? 2.0 : atrValue > atrMA * 0.7 ? 1.0 : 0.0
+
+// Factor 3: Volume confirmation (max 2 points)
+volumeScore = isHighVolume and isBullishBar and currentTrend == BULLISH ? 2.0 :
+              isHighVolume and isBearishBar and currentTrend == BEARISH ? 2.0 :
+              isHighVolume ? 1.0 : 0.0
+
+// Factor 4: Price position relative to MA (max 2 points)
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+maScore = close > ema20 and ema20 > ema50 and currentTrend == BULLISH ? 2.0 :
+          close < ema20 and ema20 < ema50 and currentTrend == BEARISH ? 2.0 :
+          close > ema50 ? 1.0 : 0.0
+
+// Factor 5: Phase alignment (max 1 point)
+phaseScore = (currentPhase == PHASE_MARKUP and currentTrend == BULLISH) or
+             (currentPhase == PHASE_MARKDOWN and currentTrend == BEARISH) ? 1.0 : 0.0
+
+trendStrength := swingScore + atrScore + volumeScore + maScore + phaseScore
+
+// --- Risk Level ---
+riskLevel = trendStrength >= 7 ? "Low" :
+            trendStrength >= 4 ? "Medium" : "High"
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 12: VISUALIZATION - PHASE BACKGROUND  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Phase Background Color ---
+phaseBackgroundColor = showPhaseBackground ?
+    currentPhase == PHASE_ACCUMULATION ? COLOR_ACCUMULATION :
+    currentPhase == PHASE_MARKUP ? COLOR_MARKUP :
+    currentPhase == PHASE_DISTRIBUTION ? COLOR_DISTRIBUTION :
+    currentPhase == PHASE_MARKDOWN ? COLOR_MARKDOWN :
+    na : na
+
+bgcolor(phaseBackgroundColor)
+
+// --- Volume Divergence Background ---
+bgcolor(bullishVolumeDivergence ? color.new(#4CAF50, 85) : na, title = "Bullish Divergence")
+bgcolor(bearishVolumeDivergence ? divBgColor : na, title = "Bearish Divergence")
+
+// --- Volume Bar Coloring ---
+barcolor(showVolumeColors ? volumeBarColor : na)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 13: VISUALIZATION - SIGNALS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- BUY Signal Label ---
+if buySignalFiltered
+    signalText = "BUY"
+    if buyCondition2
+        signalText := "BUY\nBreakout"
+    else if buyCondition3
+        signalText := "BUY\nPullback"
+
+    label.new(bar_index, low, signalText,
+              xloc.bar_index, yloc.price, COLOR_BULLISH, label.style_label_up, color.white, size.normal)
+
+// --- SELL Signal Label ---
+if sellSignalFiltered
+    signalText = "SELL"
+    if sellCondition1
+        signalText := "SELL\nDistribution"
+    else if sellCondition2
+        signalText := "SELL\nClimax"
+    else if sellCondition3
+        signalText := "SELL\nStructure Break"
+
+    label.new(bar_index, high, signalText,
+              xloc.bar_index, yloc.price, COLOR_BEARISH, label.style_label_down, color.white, size.normal)
+
+// --- SHORT Signal Label ---
+if shortSignalFiltered
+    signalText = "SHORT"
+    if shortCondition1
+        signalText := "SHORT\nBreakdown"
+    else if shortCondition2
+        signalText := "SHORT\nRetest Fail"
+
+    label.new(bar_index, high, signalText,
+              xloc.bar_index, yloc.price, #B71C1C, label.style_label_down, color.white, size.normal)
+
+// --- Phase Change Labels ---
+if showPhaseLabels and phaseJustChanged
+    phaseText = currentPhase == PHASE_ACCUMULATION ? "ACCUMULATION" :
+                currentPhase == PHASE_MARKUP ? "MARKUP - UPTREND" :
+                currentPhase == PHASE_DISTRIBUTION ? "DISTRIBUTION - CAUTION" :
+                currentPhase == PHASE_MARKDOWN ? "MARKDOWN - DOWNTREND" : ""
+
+    phaseColor = currentPhase == PHASE_ACCUMULATION ? color.blue :
+                 currentPhase == PHASE_MARKUP ? color.green :
+                 currentPhase == PHASE_DISTRIBUTION ? color.orange :
+                 currentPhase == PHASE_MARKDOWN ? color.red : color.gray
+
+    if phaseText != ""
+        label.new(bar_index, currentPhase == PHASE_MARKDOWN ? high : low, phaseText,
+                  xloc.bar_index, yloc.price, phaseColor,
+                  currentPhase == PHASE_MARKDOWN ? label.style_label_down : label.style_label_up,
+                  color.white, size.small)
+
+// --- Volume Climax Warning ---
+if isVolumeClimax
+    label.new(bar_index, high, "CLIMAX",
+              xloc.bar_index, yloc.price, colorVolumeClimax, label.style_label_down, color.black, size.tiny)
+
+// --- Volume Divergence Labels ---
+if bullishVolumeDivergence
+    label.new(bar_index - swingLookback, pivotLowPrice, "Bull Div",
+              xloc.bar_index, yloc.price, color.green, label.style_label_up, color.white, size.tiny)
+
+if bearishVolumeDivergence
+    label.new(bar_index - swingLookback, pivotHighPrice, "Bear Div",
+              xloc.bar_index, yloc.price, color.orange, label.style_label_down, color.white, size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 14: DASHBOARD TABLE  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Dashboard Position ---
+tablePosition = dashboardPosition == "Top Left" ? position.top_left :
+                dashboardPosition == "Top Right" ? position.top_right :
+                dashboardPosition == "Bottom Left" ? position.bottom_left :
+                position.bottom_right
+
+// --- Dashboard Size ---
+tableSize = dashboardSize == "Tiny" ? size.tiny :
+            dashboardSize == "Small" ? size.small : size.normal
+
+// --- Create Dashboard ---
+var table dashboard = na
+
+if showDashboard and barstate.islast
+    if not na(dashboard)
+        table.delete(dashboard)
+
+    dashboard := table.new(tablePosition, 2, 8,
+                           bgcolor = color.new(color.black, 20),
+                           border_width = 1,
+                           border_color = color.gray)
+
+    // --- Header ---
+    table.cell(dashboard, 0, 0, "MS & VOLUME ANALYSIS",
+               text_color = color.white, text_size = tableSize, bgcolor = color.new(color.blue, 50))
+    table.merge_cells(dashboard, 0, 0, 1, 0)
+
+    // --- Market Phase ---
+    phaseText = currentPhase == PHASE_ACCUMULATION ? "Accumulation" :
+                currentPhase == PHASE_MARKUP ? "Markup" :
+                currentPhase == PHASE_DISTRIBUTION ? "Distribution" :
+                currentPhase == PHASE_MARKDOWN ? "Markdown" : "Unknown"
+    phaseColor = currentPhase == PHASE_ACCUMULATION ? color.blue :
+                 currentPhase == PHASE_MARKUP ? color.green :
+                 currentPhase == PHASE_DISTRIBUTION ? color.orange :
+                 currentPhase == PHASE_MARKDOWN ? color.red : color.gray
+
+    table.cell(dashboard, 0, 1, "Market Phase", text_color = color.white, text_size = size.tiny)
+    table.cell(dashboard, 1, 1, phaseText, text_color = phaseColor, text_size = size.tiny)
+
+    // --- Volume Ratio ---
+    volRatioColor = volumeRatio >= volumeClimaxThreshold ? colorVolumeClimax :
+                    volumeRatio >= volumeSpikeThreshold ? color.orange :
+                    volumeRatio >= 1.0 ? color.green : color.gray
+
+    table.cell(dashboard, 0, 2, "Volume Ratio", text_color = color.white, text_size = size.tiny)
+    table.cell(dashboard, 1, 2, str.tostring(volumeRatio, "#.##") + "x", text_color = volRatioColor, text_size = size.tiny)
+
+    // --- Trend Direction ---
+    trendText = currentTrend == BULLISH ? "Uptrend" :
+                currentTrend == BEARISH ? "Downtrend" : "Sideways"
+    trendColor = currentTrend == BULLISH ? COLOR_BULLISH :
+                 currentTrend == BEARISH ? COLOR_BEARISH : COLOR_NEUTRAL
+
+    table.cell(dashboard, 0, 3, "Trend", text_color = color.white, text_size = size.tiny)
+    table.cell(dashboard, 1, 3, trendText, text_color = trendColor, text_size = size.tiny)
+
+    // --- Last Signal ---
+    signalColor = lastSignal == "BUY" ? COLOR_BULLISH :
+                  lastSignal == "SELL" ? COLOR_BEARISH :
+                  lastSignal == "SHORT" ? #B71C1C : color.gray
+
+    table.cell(dashboard, 0, 4, "Last Signal", text_color = color.white, text_size = size.tiny)
+    table.cell(dashboard, 1, 4, lastSignal, text_color = signalColor, text_size = size.tiny)
+
+    // --- Trend Strength ---
+    strengthColor = trendStrength >= 7 ? color.green :
+                    trendStrength >= 4 ? color.yellow : color.red
+
+    table.cell(dashboard, 0, 5, "Trend Strength", text_color = color.white, text_size = size.tiny)
+    table.cell(dashboard, 1, 5, str.tostring(trendStrength, "#.#") + "/10", text_color = strengthColor, text_size = size.tiny)
+
+    // --- Risk Level ---
+    riskColor = riskLevel == "Low" ? color.green :
+                riskLevel == "Medium" ? color.yellow : color.red
+
+    table.cell(dashboard, 0, 6, "Risk Level", text_color = color.white, text_size = size.tiny)
+    table.cell(dashboard, 1, 6, riskLevel, text_color = riskColor, text_size = size.tiny)
+
+    // --- S/R Levels ---
+    srText = "S: " + (na(nearestSupport) ? "-" : str.tostring(nearestSupport, "#.##")) +
+             " | R: " + (na(nearestResistance) ? "-" : str.tostring(nearestResistance, "#.##"))
+
+    table.cell(dashboard, 0, 7, "S/R Levels", text_color = color.white, text_size = size.tiny)
+    table.cell(dashboard, 1, 7, srText, text_color = color.aqua, text_size = size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 15: SUPPORT/RESISTANCE LINES  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Plot S/R Lines ---
+plot(showSupportResistance and not na(nearestResistance) ? nearestResistance : na,
+     "Nearest Resistance", color = color.new(color.red, 50), linewidth = 1, style = plot.style_circles)
+plot(showSupportResistance and not na(nearestSupport) ? nearestSupport : na,
+     "Nearest Support", color = color.new(color.green, 50), linewidth = 1, style = plot.style_circles)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  SECTION 16: ALERTS  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+// --- Accumulation Phase Alert ---
+alertcondition(phaseJustChanged and currentPhase == PHASE_ACCUMULATION and alertAccumulation,
+               title = "Accumulation Phase Start",
+               message = "Market Structure: Accumulation phase detected - Price consolidating in tight range")
+
+// --- Markup Breakout Alert ---
+alertcondition(phaseJustChanged and currentPhase == PHASE_MARKUP and alertMarkupBreakout,
+               title = "Markup Breakout (BUY)",
+               message = "Market Structure: Markup breakout detected - Potential uptrend beginning")
+
+// --- Distribution Phase Alert ---
+alertcondition(phaseJustChanged and currentPhase == PHASE_DISTRIBUTION and alertDistribution,
+               title = "Distribution Phase Start",
+               message = "Market Structure: Distribution phase detected - CAUTION: Potential top forming")
+
+// --- Markdown Breakdown Alert ---
+alertcondition(phaseJustChanged and currentPhase == PHASE_MARKDOWN and alertMarkdownBreakdown,
+               title = "Markdown Breakdown (SELL)",
+               message = "Market Structure: Markdown breakdown detected - Potential downtrend beginning")
+
+// --- Volume Climax Alert ---
+alertcondition(isVolumeClimax and alertVolumeClimax,
+               title = "Volume Climax",
+               message = "Market Structure: Volume climax detected - Extreme volume, watch for reversal")
+
+// --- Structure Break Alerts ---
+alertcondition(isNewHH and alertStructureBreak,
+               title = "Higher High (HH)",
+               message = "Market Structure: Higher High formed - Bullish structure continuation")
+
+alertcondition(isNewHL and alertStructureBreak,
+               title = "Higher Low (HL)",
+               message = "Market Structure: Higher Low formed - Bullish structure continuation")
+
+alertcondition(isNewLH and alertStructureBreak,
+               title = "Lower High (LH)",
+               message = "Market Structure: Lower High formed - Potential bearish reversal")
+
+alertcondition(isNewLL and alertStructureBreak,
+               title = "Lower Low (LL)",
+               message = "Market Structure: Lower Low formed - Bearish structure continuation")
+
+// --- Trading Signal Alerts ---
+alertcondition(buySignalFiltered,
+               title = "BUY Signal",
+               message = "Market Structure: BUY signal generated at {{close}}")
+
+alertcondition(sellSignalFiltered,
+               title = "SELL Signal",
+               message = "Market Structure: SELL signal generated at {{close}}")
+
+alertcondition(shortSignalFiltered,
+               title = "SHORT Signal",
+               message = "Market Structure: SHORT signal generated at {{close}}")
+
+// --- Volume Divergence Alerts ---
+alertcondition(bullishVolumeDivergence,
+               title = "Bullish Volume Divergence",
+               message = "Market Structure: Bullish volume divergence - Price making LL but volume decreasing")
+
+alertcondition(bearishVolumeDivergence,
+               title = "Bearish Volume Divergence",
+               message = "Market Structure: Bearish volume divergence - Price making HH but volume decreasing")
+
+// --- Combined Any Signal Alert ---
+alertcondition(buySignalFiltered or sellSignalFiltered or shortSignalFiltered,
+               title = "Any Trading Signal",
+               message = "Market Structure: Trading signal detected at {{close}}")
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// ███  END OF INDICATOR  ███
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════

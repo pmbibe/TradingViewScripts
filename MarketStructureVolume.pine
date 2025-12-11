@@ -119,43 +119,25 @@ alertVolumeClimax       = input.bool(true, "Alert: Volume Climax", group = GROUP
 alertStructureBreak     = input.bool(true, "Alert: Structure Break", group = GROUP_ALERTS)
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 3: DATA STRUCTURES  ███
+// ███  SECTION 3: GLOBAL VARIABLES  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
-// --- Swing Point Type ---
-type SwingPoint
-    float price
-    int barIdx
-    int barTime
-    bool isHigh
-    string label  // HH, HL, LH, LL
+// --- Swing Point Tracking (using simple types to avoid UDT na issues) ---
+var float lastSwingHighPrice = na
+var int lastSwingHighBar = na
+var float lastSwingLowPrice = na
+var int lastSwingLowBar = na
 
-// --- Market Phase Info ---
-type PhaseInfo
-    int phase
-    int startBar
-    float rangeHigh
-    float rangeLow
-    int swingCount
+var float prevSwingHighPrice = na
+var int prevSwingHighBar = na
+var float prevSwingLowPrice = na
+var int prevSwingLowBar = na
 
-// --- Signal Type ---
-type TradeSignal
-    string signalType  // BUY, SELL, SHORT
-    float price
-    int barIdx
-    string reason
-
-// ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 4: GLOBAL VARIABLES  ███
-// ══════════════════════════════════════════════════════════════════════════════════════════════════════
-
-// --- Swing Point Storage ---
-var array<SwingPoint> swingHighs = array.new<SwingPoint>()
-var array<SwingPoint> swingLows = array.new<SwingPoint>()
-var SwingPoint lastSwingHigh = na
-var SwingPoint lastSwingLow = na
-var SwingPoint prevSwingHigh = na
-var SwingPoint prevSwingLow = na
+// --- Swing Arrays for S/R detection ---
+var array<float> swingHighPrices = array.new_float()
+var array<int> swingHighBars = array.new_int()
+var array<float> swingLowPrices = array.new_float()
+var array<int> swingLowBars = array.new_int()
 
 // --- Trend Tracking ---
 var int currentTrend = NEUTRAL
@@ -175,18 +157,15 @@ var int distributionBars = 0
 // --- Volume Analysis ---
 var float lastSwingHighVolume = na
 var float lastSwingLowVolume = na
+var float prevSwingHighVolume = na
+var float prevSwingLowVolume = na
 
 // --- Signal Tracking ---
 var string lastSignal = "NONE"
 var int lastSignalBar = 0
 
-// --- Line/Label Arrays for Drawing ---
-var array<line> structureLines = array.new_line()
-var array<label> structureLabels = array.new_label()
-var array<box> phaseBoxes = array.new_box()
-
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 5: VOLUME CALCULATIONS  ███
+// ███  SECTION 4: VOLUME CALCULATIONS  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Volume Moving Averages ---
@@ -194,7 +173,7 @@ volumeMA = ta.sma(volume, volumeMALength)
 volumeMA2 = ta.sma(volume, volumeMALength2)
 
 // --- Volume Ratio ---
-volumeRatio = volumeMA > 0 ? volume / volumeMA : 0
+volumeRatio = volumeMA > 0 ? volume / volumeMA : 0.0
 
 // --- Volume Conditions ---
 isVolumeSpike = volumeRatio >= volumeSpikeThreshold
@@ -220,7 +199,7 @@ atrMA = ta.sma(atrValue, atrPeriod)
 isLowATR = atrValue < atrMA
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 6: SWING POINT DETECTION (NON-REPAINTING)  ███
+// ███  SECTION 5: SWING POINT DETECTION (NON-REPAINTING)  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Get Line Style ---
@@ -232,7 +211,6 @@ getLineStyle(string style) =>
         => line.style_solid
 
 // --- Pivot Detection (Confirmed - No Repaint) ---
-// Using offset to ensure we only detect confirmed pivots
 pivotHighPrice = ta.pivothigh(high, swingLookback, swingLookback)
 pivotLowPrice = ta.pivotlow(low, swingLookback, swingLookback)
 
@@ -250,8 +228,8 @@ var bool isNewLH = false
 
 if isPivotHigh
     // Determine if HH or LH
-    isHH = na(prevSwingHigh) or pivotHighPrice > prevSwingHigh.price
-    isLH = not na(prevSwingHigh) and pivotHighPrice < prevSwingHigh.price
+    isHH = na(prevSwingHighPrice) or pivotHighPrice > prevSwingHighPrice
+    isLH = not na(prevSwingHighPrice) and pivotHighPrice < prevSwingHighPrice
 
     swingHighLabel := isHH ? "HH" : "LH"
     isNewHH := isHH
@@ -266,17 +244,21 @@ if isPivotHigh
         consecutiveHH := 0
 
     // Store previous swing
-    prevSwingHigh := lastSwingHigh
+    prevSwingHighPrice := lastSwingHighPrice
+    prevSwingHighBar := lastSwingHighBar
+    prevSwingHighVolume := lastSwingHighVolume
 
-    // Create new swing point
-    newSwing = SwingPoint.new(pivotHighPrice, bar_index - swingLookback, time[swingLookback], true, swingHighLabel)
-    lastSwingHigh := newSwing
+    // Update current swing
+    lastSwingHighPrice := pivotHighPrice
+    lastSwingHighBar := bar_index - swingLookback
     lastSwingHighVolume := swingVolumeHigh
 
-    // Add to array (limit size to prevent memory issues)
-    if array.size(swingHighs) >= 100
-        array.shift(swingHighs)
-    array.push(swingHighs, newSwing)
+    // Add to arrays (limit size to prevent memory issues)
+    if array.size(swingHighPrices) >= 100
+        array.shift(swingHighPrices)
+        array.shift(swingHighBars)
+    array.push(swingHighPrices, pivotHighPrice)
+    array.push(swingHighBars, bar_index - swingLookback)
 
     // Draw label
     if showSwingLabels
@@ -286,10 +268,13 @@ if isPivotHigh
                   xloc.bar_index, yloc.price, labelColor, labelStyle, color.white, size.small)
 
     // Draw structure line
-    if showSwingLines and not na(prevSwingHigh)
+    if showSwingLines and not na(prevSwingHighPrice) and not na(prevSwingHighBar)
         lineColor = isHH ? hhColor : lhColor
-        line.new(prevSwingHigh.barIdx, prevSwingHigh.price, bar_index - swingLookback, pivotHighPrice,
+        line.new(prevSwingHighBar, prevSwingHighPrice, bar_index - swingLookback, pivotHighPrice,
                  xloc.bar_index, extend.none, lineColor, getLineStyle(swingLineStyle), 2)
+else
+    isNewHH := false
+    isNewLH := false
 
 // --- Process New Swing Low ---
 var string swingLowLabel = ""
@@ -298,8 +283,8 @@ var bool isNewLL = false
 
 if isPivotLow
     // Determine if HL or LL
-    isHL = na(prevSwingLow) or pivotLowPrice > prevSwingLow.price
-    isLL = not na(prevSwingLow) and pivotLowPrice < prevSwingLow.price
+    isHL = na(prevSwingLowPrice) or pivotLowPrice > prevSwingLowPrice
+    isLL = not na(prevSwingLowPrice) and pivotLowPrice < prevSwingLowPrice
 
     swingLowLabel := isHL ? "HL" : "LL"
     isNewHL := isHL
@@ -314,17 +299,21 @@ if isPivotLow
         consecutiveHL := 0
 
     // Store previous swing
-    prevSwingLow := lastSwingLow
+    prevSwingLowPrice := lastSwingLowPrice
+    prevSwingLowBar := lastSwingLowBar
+    prevSwingLowVolume := lastSwingLowVolume
 
-    // Create new swing point
-    newSwing = SwingPoint.new(pivotLowPrice, bar_index - swingLookback, time[swingLookback], false, swingLowLabel)
-    lastSwingLow := newSwing
+    // Update current swing
+    lastSwingLowPrice := pivotLowPrice
+    lastSwingLowBar := bar_index - swingLookback
     lastSwingLowVolume := swingVolumeLow
 
-    // Add to array
-    if array.size(swingLows) >= 100
-        array.shift(swingLows)
-    array.push(swingLows, newSwing)
+    // Add to arrays
+    if array.size(swingLowPrices) >= 100
+        array.shift(swingLowPrices)
+        array.shift(swingLowBars)
+    array.push(swingLowPrices, pivotLowPrice)
+    array.push(swingLowBars, bar_index - swingLookback)
 
     // Draw label
     if showSwingLabels
@@ -334,10 +323,13 @@ if isPivotLow
                   xloc.bar_index, yloc.price, labelColor, labelStyle, color.white, size.small)
 
     // Draw structure line
-    if showSwingLines and not na(prevSwingLow)
+    if showSwingLines and not na(prevSwingLowPrice) and not na(prevSwingLowBar)
         lineColor = isHL ? hlColor : llColor
-        line.new(prevSwingLow.barIdx, prevSwingLow.price, bar_index - swingLookback, pivotLowPrice,
+        line.new(prevSwingLowBar, prevSwingLowPrice, bar_index - swingLookback, pivotLowPrice,
                  xloc.bar_index, extend.none, lineColor, getLineStyle(swingLineStyle), 2)
+else
+    isNewHL := false
+    isNewLL := false
 
 // --- Trend Direction Based on Swings ---
 if consecutiveHH >= 2 and consecutiveHL >= 2
@@ -348,37 +340,34 @@ else
     currentTrend := NEUTRAL
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 7: VOLUME DIVERGENCE DETECTION  ███
+// ███  SECTION 6: VOLUME DIVERGENCE DETECTION  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Bullish Volume Divergence (Price LL but Volume not increasing) ---
-// Price making lower lows but volume is decreasing
 bullishVolumeDivergence = false
-if showVolumeDivergence and isNewLL and not na(lastSwingLowVolume) and not na(prevSwingLow)
-    if pivotLowPrice < prevSwingLow.price
+if showVolumeDivergence and isNewLL and not na(lastSwingLowVolume) and not na(prevSwingLowVolume) and not na(prevSwingLowPrice)
+    if pivotLowPrice < prevSwingLowPrice
         // Check if volume at current low is less than at previous low
-        prevLowVolume = ta.sma(volume, swingLookback)[swingLookback * 2]
-        if lastSwingLowVolume < prevLowVolume * 0.8
+        if lastSwingLowVolume < prevSwingLowVolume * 0.8
             bullishVolumeDivergence := true
 
 // --- Bearish Volume Divergence (Price HH but Volume decreasing) ---
 bearishVolumeDivergence = false
-if showVolumeDivergence and isNewHH and not na(lastSwingHighVolume) and not na(prevSwingHigh)
-    if pivotHighPrice > prevSwingHigh.price
+if showVolumeDivergence and isNewHH and not na(lastSwingHighVolume) and not na(prevSwingHighVolume) and not na(prevSwingHighPrice)
+    if pivotHighPrice > prevSwingHighPrice
         // Check if volume at current high is less than at previous high
-        prevHighVolume = ta.sma(volume, swingLookback)[swingLookback * 2]
-        if lastSwingHighVolume < prevHighVolume * 0.8
+        if lastSwingHighVolume < prevSwingHighVolume * 0.8
             bearishVolumeDivergence := true
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 8: MARKET PHASE DETECTION  ███
+// ███  SECTION 7: MARKET PHASE DETECTION  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Calculate Rolling Range ---
 rollingHigh = ta.highest(high, accMinBars)
 rollingLow = ta.lowest(low, accMinBars)
 rollingRange = rollingHigh - rollingLow
-rangePercent = (rollingRange / rollingLow) * 100
+rangePercent = rollingLow > 0 ? (rollingRange / rollingLow) * 100 : 0.0
 
 // --- Accumulation Detection ---
 // Low ATR + Low volume + Tight range + No volume spikes
@@ -401,8 +390,9 @@ isMarkupCondition = (consecutiveHH >= phaseMinSwings or consecutiveHL >= phaseMi
 
 // --- Distribution Detection ---
 // Volume climax at highs + Price failing to make new highs + Red volume bars
+hasLastSwingHigh = not na(lastSwingHighPrice)
 isDistributionCondition = (isVolumeClimax or volumeRatio > volumeSpikeThreshold) and
-                          (consecutiveLH >= 1 or (not na(lastSwingHigh) and close < lastSwingHigh.price)) and
+                          (consecutiveLH >= 1 or (hasLastSwingHigh and close < lastSwingHighPrice)) and
                           isBearishBar and isHighVolume
 
 // --- Track Distribution Bars ---
@@ -453,7 +443,7 @@ if isMarkdownCondition and (currentPhase == PHASE_DISTRIBUTION or currentPhase =
 phaseJustChanged = currentPhase != prevPhase
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 9: TRADING SIGNALS  ███
+// ███  SECTION 8: TRADING SIGNALS  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Confirmed Bar Check ---
@@ -473,11 +463,12 @@ buyCondition2 = prevPhase == PHASE_ACCUMULATION and
                 isConfirmedBar
 
 // 3. Pullback in uptrend + low volume + at support (HL)
+hasLastSwingLow = not na(lastSwingLowPrice)
 buyCondition3 = currentTrend == BULLISH and
                 isNewHL and
                 isLowVolume and
-                not na(lastSwingLow) and
-                close > lastSwingLow.price and
+                hasLastSwingLow and
+                close > lastSwingLowPrice and
                 isConfirmedBar
 
 buySignal = showBuySignals and (buyCondition1 or buyCondition2 or buyCondition3)
@@ -536,7 +527,7 @@ if shortSignalFiltered
     lastSignalBar := bar_index
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 10: SUPPORT/RESISTANCE DETECTION  ███
+// ███  SECTION 9: SUPPORT/RESISTANCE DETECTION  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Find Support/Resistance from Swing Points ---
@@ -545,30 +536,32 @@ var float nearestSupport = na
 
 if showSupportResistance
     // Find nearest resistance (swing high above current price)
-    if array.size(swingHighs) > 0
-        for i = array.size(swingHighs) - 1 to 0
-            sh = array.get(swingHighs, i)
-            if sh.price > close
-                nearestResistance := sh.price
+    nearestResistance := na
+    if array.size(swingHighPrices) > 0
+        for i = array.size(swingHighPrices) - 1 to 0
+            shPrice = array.get(swingHighPrices, i)
+            if shPrice > close
+                nearestResistance := shPrice
                 break
 
     // Find nearest support (swing low below current price)
-    if array.size(swingLows) > 0
-        for i = array.size(swingLows) - 1 to 0
-            sl = array.get(swingLows, i)
-            if sl.price < close
-                nearestSupport := sl.price
+    nearestSupport := na
+    if array.size(swingLowPrices) > 0
+        for i = array.size(swingLowPrices) - 1 to 0
+            slPrice = array.get(swingLowPrices, i)
+            if slPrice < close
+                nearestSupport := slPrice
                 break
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 11: TREND STRENGTH METER  ███
+// ███  SECTION 10: TREND STRENGTH METER  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Calculate Trend Strength (1-10 scale) ---
 trendStrength = 0.0
 
 // Factor 1: Consecutive swings (max 3 points)
-swingScore = math.min(3, (consecutiveHH + consecutiveHL + consecutiveLH + consecutiveLL) / 2)
+swingScore = math.min(3.0, (consecutiveHH + consecutiveHL + consecutiveLH + consecutiveLL) / 2.0)
 
 // Factor 2: ATR relative to average (max 2 points)
 atrScore = atrValue > atrMA ? 2.0 : atrValue > atrMA * 0.7 ? 1.0 : 0.0
@@ -596,7 +589,7 @@ riskLevel = trendStrength >= 7 ? "Low" :
             trendStrength >= 4 ? "Medium" : "High"
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 12: VISUALIZATION - PHASE BACKGROUND  ███
+// ███  SECTION 11: VISUALIZATION - PHASE BACKGROUND  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Phase Background Color ---
@@ -617,7 +610,7 @@ bgcolor(bearishVolumeDivergence ? divBgColor : na, title = "Bearish Divergence")
 barcolor(showVolumeColors ? volumeBarColor : na)
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 13: VISUALIZATION - SIGNALS  ███
+// ███  SECTION 12: VISUALIZATION - SIGNALS  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- BUY Signal Label ---
@@ -688,7 +681,7 @@ if bearishVolumeDivergence
               xloc.bar_index, yloc.price, color.orange, label.style_label_down, color.white, size.tiny)
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 14: DASHBOARD TABLE  ███
+// ███  SECTION 13: DASHBOARD TABLE  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Dashboard Position ---
@@ -778,7 +771,7 @@ if showDashboard and barstate.islast
     table.cell(dashboard, 1, 7, srText, text_color = color.aqua, text_size = size.tiny)
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 15: SUPPORT/RESISTANCE LINES  ███
+// ███  SECTION 14: SUPPORT/RESISTANCE LINES  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Plot S/R Lines ---
@@ -788,7 +781,7 @@ plot(showSupportResistance and not na(nearestSupport) ? nearestSupport : na,
      "Nearest Support", color = color.new(color.green, 50), linewidth = 1, style = plot.style_circles)
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
-// ███  SECTION 16: ALERTS  ███
+// ███  SECTION 15: ALERTS  ███
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
 
 // --- Accumulation Phase Alert ---

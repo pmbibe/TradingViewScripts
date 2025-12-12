@@ -140,17 +140,15 @@ var array<float> pivotLowVolumes = array.new_float(0)
 // SECTION 4: HELPER FUNCTIONS
 // ============================================
 
-// Delete line safely
+// Delete line safely (no return value needed)
 deleteLine(line l) =>
     if not na(l)
         line.delete(l)
-    na
 
-// Delete label safely
+// Delete label safely (no return value needed)
 deleteLabel(label lbl) =>
     if not na(lbl)
         label.delete(lbl)
-    na
 
 // Cleanup old divergence objects
 cleanupDivergence() =>
@@ -415,14 +413,14 @@ if longSignal and not hasActiveTrade
         barsInTrade := 0
 
         // Delete old lines
-        entryLine := deleteLine(entryLine)
-        stopLine := deleteLine(stopLine)
-        tp1Line := deleteLine(tp1Line)
-        tp2Line := deleteLine(tp2Line)
-        tp3Line := deleteLine(tp3Line)
-        entryLabel := deleteLabel(entryLabel)
-        stopLabel := deleteLabel(stopLabel)
-        tp1Label := deleteLabel(tp1Label)
+        deleteLine(entryLine)
+        deleteLine(stopLine)
+        deleteLine(tp1Line)
+        deleteLine(tp2Line)
+        deleteLine(tp3Line)
+        deleteLabel(entryLabel)
+        deleteLabel(stopLabel)
+        deleteLabel(tp1Label)
 
         // Create new lines (ONCE)
         if showLevels
@@ -456,14 +454,14 @@ if shortSignal and not hasActiveTrade
         barsInTrade := 0
 
         // Delete old lines
-        entryLine := deleteLine(entryLine)
-        stopLine := deleteLine(stopLine)
-        tp1Line := deleteLine(tp1Line)
-        tp2Line := deleteLine(tp2Line)
-        tp3Line := deleteLine(tp3Line)
-        entryLabel := deleteLabel(entryLabel)
-        stopLabel := deleteLabel(stopLabel)
-        tp1Label := deleteLabel(tp1Label)
+        deleteLine(entryLine)
+        deleteLine(stopLine)
+        deleteLine(tp1Line)
+        deleteLine(tp2Line)
+        deleteLine(tp3Line)
+        deleteLabel(entryLabel)
+        deleteLabel(stopLabel)
+        deleteLabel(tp1Label)
 
         // Create new lines
         if showLevels
@@ -516,14 +514,14 @@ if hasActiveTrade
         hasActiveTrade := false
 
         // Delete lines
-        entryLine := deleteLine(entryLine)
-        stopLine := deleteLine(stopLine)
-        tp1Line := deleteLine(tp1Line)
-        tp2Line := deleteLine(tp2Line)
-        tp3Line := deleteLine(tp3Line)
-        entryLabel := deleteLabel(entryLabel)
-        stopLabel := deleteLabel(stopLabel)
-        tp1Label := deleteLabel(tp1Label)
+        deleteLine(entryLine)
+        deleteLine(stopLine)
+        deleteLine(tp1Line)
+        deleteLine(tp2Line)
+        deleteLine(tp3Line)
+        deleteLabel(entryLabel)
+        deleteLabel(stopLabel)
+        deleteLabel(tp1Label)
 
 // ============================================
 // SECTION 10: VISUALIZATION

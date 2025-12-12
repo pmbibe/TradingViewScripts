@@ -341,6 +341,10 @@ if showDivergence and array.size(pivotLowPrices) >= 2
 potentialBullishBreakout = false
 potentialBearishBreakout = false
 
+// Final breakout variables (will be set by confirmation logic)
+bullishBreakout = false
+bearishBreakout = false
+
 if not na(lastAccumHigh) and accumBarsCount == 0 and accumBarsCount[1] >= minAccumBars
     // Bullish breakout
     if close > lastAccumHigh[1] and isVolumeSpike and isBullishBar and bodyPercent >= 60

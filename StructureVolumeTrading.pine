@@ -1,0 +1,523 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// Structure & Volume Trading System
+// Complete trading system for accumulation, breakout, and volume analysis
+// Author: Claude AI Assistant
+// Version: 1.0
+
+//@version=5
+indicator("Structure and Volume Trading System", "SV Trading", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=100)
+
+// ============================================
+// SECTION 1: INPUT PARAMETERS
+// ============================================
+
+// --- Accumulation Settings ---
+string GROUP_ACCUMULATION = "📊 Accumulation Settings"
+accumPeriod = input.int(12, "Accumulation Period (Bars)", minval=4, maxval=50,
+              group=GROUP_ACCUMULATION, tooltip="Minimum bars for accumulation zone")
+maxRangePercent = input.float(15.0, "Max Range % for Accumulation", minval=5.0, maxval=30.0,
+                  step=0.5, group=GROUP_ACCUMULATION, tooltip="Maximum price range to qualify as accumulation")
+requireVolDecrease = input.bool(true, "Require Volume Decrease", group=GROUP_ACCUMULATION,
+                     tooltip="Volume must decrease during accumulation")
+
+// --- Volume Settings ---
+string GROUP_VOLUME = "📈 Volume Settings"
+volMAPeriod = input.int(20, "Volume MA Period", minval=5, maxval=100, group=GROUP_VOLUME)
+spikeMultiplier = input.float(2.0, "Volume Spike Multiplier", minval=1.5, maxval=5.0,
+                  step=0.1, group=GROUP_VOLUME, tooltip="Multiplier for volume spike detection")
+showVolumePanel = input.bool(true, "Show Volume Info Labels", group=GROUP_VOLUME)
+
+// --- Signal Settings ---
+string GROUP_SIGNALS = "🎯 Signal Settings"
+showLongSignals = input.bool(true, "Show Long Signals", group=GROUP_SIGNALS)
+showShortSignals = input.bool(true, "Show Short Signals", group=GROUP_SIGNALS)
+showPullbackSignals = input.bool(true, "Show Pullback Signals", group=GROUP_SIGNALS)
+showDivergence = input.bool(true, "Show Volume Divergence", group=GROUP_SIGNALS)
+
+// --- Risk Management ---
+string GROUP_RISK = "💰 Risk Management"
+showLevels = input.bool(true, "Show Entry/SL/TP Lines", group=GROUP_RISK)
+rrMultiplier1 = input.float(2.0, "RR Ratio for TP1", minval=1.0, maxval=5.0,
+                step=0.5, group=GROUP_RISK)
+rrMultiplier2 = input.float(3.0, "RR Ratio for TP2", minval=2.0, maxval=8.0,
+                step=0.5, group=GROUP_RISK)
+rrMultiplier3 = input.float(4.0, "RR Ratio for TP3", minval=3.0, maxval=10.0,
+                step=0.5, group=GROUP_RISK)
+maxRiskPercent = input.float(15.0, "Max Risk % Allowed", minval=5.0, maxval=30.0,
+                 step=1.0, group=GROUP_RISK)
+minRRRatio = input.float(2.0, "Min RR Ratio", minval=1.5, maxval=5.0,
+             step=0.5, group=GROUP_RISK)
+
+// --- Support/Resistance Settings ---
+string GROUP_SR = "📐 Support/Resistance"
+showSupportResistance = input.bool(true, "Show S/R Lines", group=GROUP_SR)
+srLookback = input.int(10, "S/R Lookback Period", minval=5, maxval=20, group=GROUP_SR)
+maxSRLines = input.int(5, "Max S/R Lines", minval=3, maxval=10, group=GROUP_SR)
+
+// --- Pullback Settings ---
+string GROUP_PULLBACK = "↩️ Pullback Settings"
+detectPullback = input.bool(true, "Detect Pullback Entries", group=GROUP_PULLBACK)
+pullbackPercent = input.float(5.0, "Valid Pullback %", minval=2.0, maxval=15.0,
+                  step=0.5, group=GROUP_PULLBACK)
+
+// --- Divergence Settings ---
+string GROUP_DIVERGENCE = "⚠️ Divergence Settings"
+pivotLookback = input.int(5, "Pivot Lookback", minval=2, maxval=20, group=GROUP_DIVERGENCE)
+minDivergencePercent = input.float(5.0, "Min Volume Decrease %", minval=3.0, maxval=20.0,
+                       step=1.0, group=GROUP_DIVERGENCE)
+
+// --- Visual Settings ---
+string GROUP_VISUAL = "🎨 Visual Settings"
+showTrendBackground = input.bool(true, "Show Trend Background", group=GROUP_VISUAL)
+labelSize = input.string("normal", "Label Size", options=["small", "normal", "large"],
+            group=GROUP_VISUAL)
+lineWidth = input.int(2, "Line Width", minval=1, maxval=5, group=GROUP_VISUAL)
+
+// ============================================
+// SECTION 2: VARIABLES & ARRAYS
+// ============================================
+
+// --- Volume Calculations ---
+volumeMA = ta.sma(volume, volMAPeriod)
+volumeRatio = volumeMA > 0 ? volume / volumeMA : 0.0
+
+// --- Volume Spike Detection ---
+isVolumeSpike = volumeRatio >= spikeMultiplier
+isStrongSpike = volumeRatio >= (spikeMultiplier * 1.5)
+isExtremeSpike = volumeRatio >= (spikeMultiplier * 2.0)
+
+// --- Price Direction ---
+isBullishBar = close > open
+isBearishBar = close < open
+bodySize = math.abs(close - open)
+candleRange = high - low
+bodyPercent = candleRange > 0 ? (bodySize / candleRange) * 100 : 0
+
+// --- EMA Calculations ---
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+
+// --- ATR Calculation ---
+atrValue = ta.atr(14)
+
+// --- State Variables ---
+var float lastAccumHigh = na
+var float lastAccumLow = na
+var int accumBarsCount = 0
+var bool wasInAccumulation = false
+
+// --- Entry/SL/TP Storage ---
+var float entryPrice = na
+var float stopLoss = na
+var float takeProfit1 = na
+var float takeProfit2 = na
+var float takeProfit3 = na
+var bool hasActiveTrade = false
+var string tradeDirection = ""
+var int barsInTrade = 0
+
+// --- S/R Arrays ---
+var array<float> resistanceLevels = array.new_float()
+var array<int> resistanceTouches = array.new_int()
+var array<float> supportLevels = array.new_float()
+var array<int> supportTouches = array.new_int()
+
+// --- Pivot Storage for Divergence ---
+var array<float> pivotHighPrices = array.new_float()
+var array<int> pivotHighBars = array.new_int()
+var array<float> pivotHighVolumes = array.new_float()
+
+var array<float> pivotLowPrices = array.new_float()
+var array<int> pivotLowBars = array.new_int()
+var array<float> pivotLowVolumes = array.new_float()
+
+// ============================================
+// SECTION 3: ACCUMULATION DETECTION
+// ============================================
+
+// Calculate price range over accumulation period
+highestHigh = ta.highest(high, accumPeriod)
+lowestLow = ta.lowest(low, accumPeriod)
+priceRange = lowestLow > 0 ? ((highestHigh - lowestLow) / lowestLow) * 100 : 100.0
+
+// Check volume trend
+volumeMAFast = ta.sma(volume, accumPeriod)
+volumeMASlow = ta.sma(volume, accumPeriod * 2)
+volumeDecreasing = requireVolDecrease ? volumeMAFast < volumeMASlow : true
+
+// Accumulation condition
+isAccumulation = priceRange <= maxRangePercent and volumeDecreasing
+
+// Track accumulation duration
+if isAccumulation
+    accumBarsCount += 1
+    lastAccumHigh := highestHigh
+    lastAccumLow := lowestLow
+    wasInAccumulation := true
+else
+    if accumBarsCount > 0
+        wasInAccumulation := false
+    accumBarsCount := 0
+
+// Draw accumulation box
+if isAccumulation and barstate.isconfirmed
+    boxColor = color.new(color.blue, 90)
+    box.new(bar_index - accumPeriod + 1, highestHigh, bar_index, lowestLow,
+            border_color=color.blue, bgcolor=boxColor, border_width=1,
+            extend=extend.none, xloc=xloc.bar_index)
+
+    // Label for accumulation
+    if bar_index % 5 == 0
+        label.new(bar_index, highestHigh, "ACCUM",
+                 color=color.new(color.blue, 80), textcolor=color.white,
+                 style=label.style_label_down, size=size.tiny)
+
+// ============================================
+// SECTION 4: VOLUME ANALYSIS
+// ============================================
+
+// Volume spike labels
+if showVolumePanel and isVolumeSpike and barstate.isconfirmed
+    spikeText = "🔥 VOL x" + str.tostring(math.round(volumeRatio, 1))
+    labelColor = isExtremeSpike ? color.red : isStrongSpike ? color.orange : color.yellow
+    label.new(bar_index, high, spikeText,
+             yloc=yloc.abovebar, color=color.new(labelColor, 80),
+             textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+// ============================================
+// SECTION 5: BREAKOUT DETECTION
+// ============================================
+
+// Bullish Breakout Conditions
+bullishBreakout = false
+if not na(lastAccumHigh) and wasInAccumulation[1]
+    condition1 = close > lastAccumHigh[1]
+    condition2 = isVolumeSpike
+    condition3 = isBullishBar
+    condition4 = bodyPercent >= 60
+
+    bullishBreakout := condition1 and condition2 and condition3 and condition4
+
+// Bearish Breakout Conditions
+bearishBreakout = false
+if not na(lastAccumLow) and wasInAccumulation[1]
+    condition1 = close < lastAccumLow[1]
+    condition2 = isVolumeSpike
+    condition3 = isBearishBar
+    condition4 = bodyPercent >= 60
+
+    bearishBreakout := condition1 and condition2 and condition3 and condition4
+
+// ============================================
+// SECTION 6: VOLUME DIVERGENCE DETECTION
+// ============================================
+
+// Detect pivots
+pivotHigh = ta.pivothigh(high, pivotLookback, pivotLookback)
+pivotLow = ta.pivotlow(low, pivotLookback, pivotLookback)
+
+// Store pivot highs
+if not na(pivotHigh)
+    if array.size(pivotHighPrices) >= 10
+        array.shift(pivotHighPrices)
+        array.shift(pivotHighBars)
+        array.shift(pivotHighVolumes)
+
+    array.push(pivotHighPrices, pivotHigh)
+    array.push(pivotHighBars, bar_index - pivotLookback)
+
+    // Get average volume at pivot
+    pivotVol = ta.sma(volume, 3)[pivotLookback]
+    array.push(pivotHighVolumes, pivotVol)
+
+// Store pivot lows
+if not na(pivotLow)
+    if array.size(pivotLowPrices) >= 10
+        array.shift(pivotLowPrices)
+        array.shift(pivotLowBars)
+        array.shift(pivotLowVolumes)
+
+    array.push(pivotLowPrices, pivotLow)
+    array.push(pivotLowBars, bar_index - pivotLookback)
+
+    pivotVol = ta.sma(volume, 3)[pivotLookback]
+    array.push(pivotLowVolumes, pivotVol)
+
+// Detect Bearish Divergence
+bearishDivergence = false
+if showDivergence and array.size(pivotHighPrices) >= 2
+    lastPrice = array.get(pivotHighPrices, array.size(pivotHighPrices) - 1)
+    prevPrice = array.get(pivotHighPrices, array.size(pivotHighPrices) - 2)
+    lastVol = array.get(pivotHighVolumes, array.size(pivotHighVolumes) - 1)
+    prevVol = array.get(pivotHighVolumes, array.size(pivotHighVolumes) - 2)
+
+    priceHigher = lastPrice >= prevPrice
+    volumeLower = prevVol > 0 ? ((prevVol - lastVol) / prevVol * 100) >= minDivergencePercent : false
+
+    bearishDivergence := priceHigher and volumeLower
+
+    // Draw divergence line
+    if bearishDivergence and not na(pivotHigh)
+        lastBar = array.get(pivotHighBars, array.size(pivotHighBars) - 1)
+        prevBar = array.get(pivotHighBars, array.size(pivotHighBars) - 2)
+
+        line.new(prevBar, prevPrice, lastBar, lastPrice,
+                color=color.red, style=line.style_dashed, width=2)
+
+        label.new(lastBar, lastPrice, "⚠️ BEAR DIV",
+                 yloc=yloc.abovebar, color=color.red, textcolor=color.white,
+                 style=label.style_label_down, size=size.small)
+
+// Detect Bullish Divergence
+bullishDivergence = false
+if showDivergence and array.size(pivotLowPrices) >= 2
+    lastPrice = array.get(pivotLowPrices, array.size(pivotLowPrices) - 1)
+    prevPrice = array.get(pivotLowPrices, array.size(pivotLowPrices) - 2)
+    lastVol = array.get(pivotLowVolumes, array.size(pivotLowVolumes) - 1)
+    prevVol = array.get(pivotLowVolumes, array.size(pivotLowVolumes) - 2)
+
+    priceLower = lastPrice <= prevPrice
+    volumeLower = prevVol > 0 ? ((prevVol - lastVol) / prevVol * 100) >= minDivergencePercent : false
+
+    bullishDivergence := priceLower and volumeLower
+
+    // Draw divergence line
+    if bullishDivergence and not na(pivotLow)
+        lastBar = array.get(pivotLowBars, array.size(pivotLowBars) - 1)
+        prevBar = array.get(pivotLowBars, array.size(pivotLowBars) - 2)
+
+        line.new(prevBar, prevPrice, lastBar, lastPrice,
+                color=color.green, style=line.style_dashed, width=2)
+
+        label.new(lastBar, lastPrice, "⚠️ BULL DIV",
+                 yloc=yloc.belowbar, color=color.green, textcolor=color.white,
+                 style=label.style_label_up, size=size.small)
+
+// ============================================
+// SECTION 7: ENTRY/SL/TP CALCULATION
+// ============================================
+
+// Long Signal Processing
+longSignal = bullishBreakout and showLongSignals
+
+if longSignal and barstate.isconfirmed and not hasActiveTrade
+    entryPrice := close
+    stopLoss := not na(lastAccumLow) ? lastAccumLow : close - (atrValue * 1.5)
+
+    riskAmount = entryPrice - stopLoss
+    riskPercent = entryPrice > 0 ? (riskAmount / entryPrice) * 100 : 100.0
+
+    // Only take trade if risk is acceptable
+    if riskPercent <= maxRiskPercent and riskPercent > 0
+        takeProfit1 := entryPrice + (riskAmount * rrMultiplier1)
+        takeProfit2 := entryPrice + (riskAmount * rrMultiplier2)
+        takeProfit3 := entryPrice + (riskAmount * rrMultiplier3)
+
+        hasActiveTrade := true
+        tradeDirection := "LONG"
+        barsInTrade := 0
+
+// Short Signal Processing
+shortSignal = bearishBreakout and showShortSignals
+
+if shortSignal and barstate.isconfirmed and not hasActiveTrade
+    entryPrice := close
+    stopLoss := not na(lastAccumHigh) ? lastAccumHigh : close + (atrValue * 1.5)
+
+    riskAmount = stopLoss - entryPrice
+    riskPercent = entryPrice > 0 ? (riskAmount / entryPrice) * 100 : 100.0
+
+    if riskPercent <= maxRiskPercent and riskPercent > 0
+        takeProfit1 := entryPrice - (riskAmount * rrMultiplier1)
+        takeProfit2 := entryPrice - (riskAmount * rrMultiplier2)
+        takeProfit3 := entryPrice - (riskAmount * rrMultiplier3)
+
+        hasActiveTrade := true
+        tradeDirection := "SHORT"
+        barsInTrade := 0
+
+// Update trade status
+if hasActiveTrade
+    barsInTrade += 1
+
+    // Close trade if SL or TP hit
+    if tradeDirection == "LONG"
+        if close <= stopLoss or close >= takeProfit1
+            hasActiveTrade := false
+    else if tradeDirection == "SHORT"
+        if close >= stopLoss or close <= takeProfit1
+            hasActiveTrade := false
+
+    // Auto close after 50 bars
+    if barsInTrade > 50
+        hasActiveTrade := false
+
+// ============================================
+// SECTION 8: SUPPORT/RESISTANCE
+// ============================================
+
+// Update S/R levels from pivots
+if showSupportResistance
+    if not na(pivotHigh)
+        // Add to resistance
+        if array.size(resistanceLevels) < maxSRLines
+            array.push(resistanceLevels, pivotHigh)
+            array.push(resistanceTouches, 1)
+        else
+            // Replace oldest
+            array.shift(resistanceLevels)
+            array.shift(resistanceTouches)
+            array.push(resistanceLevels, pivotHigh)
+            array.push(resistanceTouches, 1)
+
+    if not na(pivotLow)
+        // Add to support
+        if array.size(supportLevels) < maxSRLines
+            array.push(supportLevels, pivotLow)
+            array.push(supportTouches, 1)
+        else
+            array.shift(supportLevels)
+            array.shift(supportTouches)
+            array.push(supportLevels, pivotLow)
+            array.push(supportTouches, 1)
+
+// ============================================
+// SECTION 9: TREND INDICATOR
+// ============================================
+
+// Determine trend
+isUptrend = ema20 > ema50 and close > ema20
+isDowntrend = ema20 < ema50 and close < ema20
+isSideways = not isUptrend and not isDowntrend
+
+// Trend background
+trendBgColor = na
+if showTrendBackground
+    if isUptrend
+        trendBgColor := color.new(color.green, 95)
+    else if isDowntrend
+        trendBgColor := color.new(color.red, 95)
+    else
+        trendBgColor := color.new(color.yellow, 97)
+
+bgcolor(trendBgColor)
+
+// ============================================
+// SECTION 10: PULLBACK ENTRY DETECTION
+// ============================================
+
+pullbackEntry = false
+if detectPullback and showPullbackSignals and isUptrend
+    recentHigh = ta.highest(high, 20)
+    pullbackPct = recentHigh > 0 ? ((recentHigh - close) / recentHigh) * 100 : 0
+
+    // Check for pullback to support
+    atSupport = math.abs(close - ema20) / close * 100 < 2.0
+    hasRejection = (low < math.min(open, close)) and ((math.min(open, close) - low) / candleRange > 0.5)
+    volumeIncreasing = volume > volume[1]
+
+    pullbackCondition = pullbackPct >= pullbackPercent and pullbackPct <= (pullbackPercent * 3)
+
+    pullbackEntry := pullbackCondition and atSupport and hasRejection and volumeIncreasing and isBullishBar
+
+// ============================================
+// SECTION 11: VISUALIZATION
+// ============================================
+
+// Plot EMAs
+plot(ema20, "EMA 20", color.blue, lineWidth)
+plot(ema50, "EMA 50", color.orange, lineWidth)
+
+// Plot Long Signals
+if longSignal and showLongSignals and barstate.isconfirmed
+    sizeValue = labelSize == "small" ? size.small : labelSize == "large" ? size.large : size.normal
+    label.new(bar_index, low, "BUY",
+             yloc=yloc.belowbar, color=color.green, textcolor=color.white,
+             style=label.style_label_up, size=sizeValue)
+
+// Plot Short Signals
+if shortSignal and showShortSignals and barstate.isconfirmed
+    sizeValue = labelSize == "small" ? size.small : labelSize == "large" ? size.large : size.normal
+    label.new(bar_index, high, "SELL",
+             yloc=yloc.abovebar, color=color.red, textcolor=color.white,
+             style=label.style_label_down, size=sizeValue)
+
+// Plot Pullback Signals
+if pullbackEntry and showPullbackSignals and barstate.isconfirmed
+    label.new(bar_index, low, "RE-ENTRY",
+             yloc=yloc.belowbar, color=color.new(color.green, 50), textcolor=color.white,
+             style=label.style_label_up, size=size.tiny)
+
+// Plot Entry/SL/TP Lines
+if showLevels and hasActiveTrade
+    // Entry Line
+    line.new(bar_index - barsInTrade, entryPrice, bar_index + 20, entryPrice,
+            color=color.blue, style=line.style_solid, width=lineWidth)
+
+    label.new(bar_index, entryPrice, "ENTRY: " + str.tostring(entryPrice, format.mintick),
+             color=color.blue, textcolor=color.white, style=label.style_label_left, size=size.tiny)
+
+    // Stop Loss Line
+    line.new(bar_index - barsInTrade, stopLoss, bar_index + 20, stopLoss,
+            color=color.red, style=line.style_dashed, width=lineWidth)
+
+    riskPct = entryPrice > 0 ? math.abs((stopLoss - entryPrice) / entryPrice * 100) : 0
+    label.new(bar_index, stopLoss, "STOP: " + str.tostring(stopLoss, format.mintick) + " (-" + str.tostring(riskPct, "#.##") + "%)",
+             color=color.red, textcolor=color.white, style=label.style_label_left, size=size.tiny)
+
+    // TP Lines
+    line.new(bar_index - barsInTrade, takeProfit1, bar_index + 20, takeProfit1,
+            color=color.new(color.green, 30), style=line.style_dashed, width=1)
+
+    tp1Pct = entryPrice > 0 ? math.abs((takeProfit1 - entryPrice) / entryPrice * 100) : 0
+    label.new(bar_index, takeProfit1, "TP1: " + str.tostring(takeProfit1, format.mintick) + " (+" + str.tostring(tp1Pct, "#.##") + "%)",
+             color=color.green, textcolor=color.white, style=label.style_label_left, size=size.tiny)
+
+    line.new(bar_index - barsInTrade, takeProfit2, bar_index + 20, takeProfit2,
+            color=color.new(color.green, 30), style=line.style_dashed, width=1)
+
+    line.new(bar_index - barsInTrade, takeProfit3, bar_index + 20, takeProfit3,
+            color=color.new(color.green, 30), style=line.style_dotted, width=1)
+
+// Plot S/R Lines
+if showSupportResistance and barstate.islast
+    // Draw resistance lines
+    for i = 0 to array.size(resistanceLevels) - 1
+        resLevel = array.get(resistanceLevels, i)
+        line.new(bar_index - 50, resLevel, bar_index + 10, resLevel,
+                extend=extend.right, color=color.new(color.red, 60),
+                style=line.style_solid, width=1)
+
+    // Draw support lines
+    for i = 0 to array.size(supportLevels) - 1
+        supLevel = array.get(supportLevels, i)
+        line.new(bar_index - 50, supLevel, bar_index + 10, supLevel,
+                extend=extend.right, color=color.new(color.green, 60),
+                style=line.style_solid, width=1)
+
+// ============================================
+// SECTION 12: ALERTS
+// ============================================
+
+alertcondition(longSignal, "Long Entry Alert",
+              "🚀 BUY Signal - Breakout with Volume Confirmation!")
+
+alertcondition(shortSignal, "Short Entry Alert",
+              "🔻 SELL Signal - Breakdown with Volume!")
+
+alertcondition(bearishDivergence, "Bearish Divergence Alert",
+              "⚠️ Bearish Divergence Detected - Possible Top!")
+
+alertcondition(bullishDivergence, "Bullish Divergence Alert",
+              "⚠️ Bullish Divergence Detected - Possible Bottom!")
+
+alertcondition(pullbackEntry, "Pullback Entry Alert",
+              "↩️ Pullback Entry Opportunity!")
+
+alertcondition(isAccumulation, "Accumulation Alert",
+              "📦 Accumulation Zone Forming - Watch for Breakout!")
+
+// ============================================
+// END OF INDICATOR
+// ============================================

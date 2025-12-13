@@ -22,12 +22,25 @@ COLOR_INFO = color.new(#42a5f5, 0)
 // SECTION 2: INPUT PARAMETERS
 // ============================================
 
+// === AUTO-DETECT TIMEFRAME & ADJUST PARAMETERS ===
+// Automatically adjust parameters based on current timeframe
+
+// Detect current timeframe in minutes
+int tfMinutes = timeframe.in_seconds() / 60
+
+// Auto-adjusted parameters (can be overridden by user inputs)
+int auto_accumPeriod = tfMinutes <= 1 ? 20 : tfMinutes <= 3 ? 18 : tfMinutes <= 5 ? 15 : tfMinutes <= 15 ? 12 : tfMinutes <= 30 ? 10 : tfMinutes <= 60 ? 8 : 6
+
+float auto_maxRange = tfMinutes <= 1 ? 8.0 : tfMinutes <= 3 ? 9.0 : tfMinutes <= 5 ? 10.0 : tfMinutes <= 15 ? 12.0 : tfMinutes <= 30 ? 14.0 : tfMinutes <= 60 ? 15.0 : 18.0
+
+int auto_minBars = tfMinutes <= 1 ? 25 : tfMinutes <= 3 ? 22 : tfMinutes <= 5 ? 20 : tfMinutes <= 15 ? 18 : tfMinutes <= 30 ? 15 : tfMinutes <= 60 ? 12 : 10
+
 // --- Accumulation Settings ---
 string GROUP_ACCUMULATION = "📊 Accumulation Settings"
-accumPeriod = input.int(30, "Accumulation Period (Bars)", minval=4, maxval=100, group=GROUP_ACCUMULATION, tooltip="Increased for longer accumulation detection")
-maxRangePercent = input.float(12.0, "Max Range %", minval=5.0, maxval=30.0, step=0.5, group=GROUP_ACCUMULATION, tooltip="Tightened for better quality zones")
+accumPeriod = input.int(auto_accumPeriod, "Accumulation Period (Bars)", minval=4, maxval=100, group=GROUP_ACCUMULATION, tooltip="Auto-adjusted per timeframe. Detection lookback for box size")
+maxRangePercent = input.float(auto_maxRange, "Max Range %", minval=5.0, maxval=30.0, step=0.5, group=GROUP_ACCUMULATION, tooltip="Auto-adjusted. Dynamic threshold based on volatility")
 requireVolDecrease = input.bool(true, "Require Volume Decrease", group=GROUP_ACCUMULATION)
-minAccumBars = input.int(20, "Min Accumulation Bars", minval=10, maxval=50, group=GROUP_ACCUMULATION, tooltip="Increased to filter short-term noise")
+minAccumBars = input.int(auto_minBars, "Min Accumulation Bars", minval=10, maxval=50, group=GROUP_ACCUMULATION, tooltip="Auto-adjusted. Minimum bars to qualify as valid accumulation")
 
 // --- Volume Settings ---
 string GROUP_VOLUME = "📈 Volume Settings"
@@ -87,7 +100,7 @@ atrValue = ta.atr(14)
 isVolumeSpike = volumeRatio >= spikeMultiplier
 isStrongSpike = volumeRatio >= (spikeMultiplier * 1.5)
 
-// --- Accumulation State (OPTIMIZED) ---
+// --- Accumulation State (ADVANCED v3.0) ---
 var box currentAccumBox = na
 var label accumLabel = na
 var bool isDrawingAccum = false
@@ -95,6 +108,18 @@ var float lastAccumHigh = na
 var float lastAccumLow = na
 var int accumBarsCount = 0
 var int accumStartBar = 0
+
+// State machine variables
+var string accumState = "IDLE"  // States: IDLE, DETECTING, CONFIRMED, CLOSING, CLOSED
+var int stateBarCount = 0
+var float frozenTop = na
+var float frozenBottom = na
+var int violationCount = 0
+
+// Overlap prevention tracking
+var array<int> archivedStarts = array.new_int(0)
+var array<int> archivedEnds = array.new_int(0)
+var int lastBoxEndBar = 0
 
 // --- Trade State (OPTIMIZED) ---
 var line entryLine = na
@@ -169,109 +194,216 @@ cleanupSignalLabels() =>
         label.delete(oldLabel)
 
 // ============================================
-// SECTION 5: ACCUMULATION DETECTION (IMPROVED v2.1)
+// SECTION 5: ACCUMULATION DETECTION (ADVANCED v3.0)
 // ============================================
+// Algorithm: Multi-condition scoring + State machine + Dynamic thresholds
+// Features: Overlap prevention, Size freeze, Conditional tolerance
 
-// === IMPROVED APPROACH: Longer & Smoother Detection ===
+// === CONSTANTS ===
+LOOKBACK_DETECTION = accumPeriod  // Short lookback for box
+LOOKBACK_CONTEXT = 50  // Long lookback for market context
+MIN_DETECTING_BARS = 3  // Bars needed to start detection
+MIN_CONFIRMED_BARS = 5  // Additional bars to confirm
+MIN_BOX_DISTANCE = tfMinutes <= 5 ? 20 : tfMinutes <= 15 ? 15 : tfMinutes <= 60 ? 10 : 8
 
-// Step 1: Calculate price range over LONGER period
-lookbackLong = 50  // Look at 50 bars for overall range
-highestHigh = ta.highest(high, lookbackLong)
-lowestLow = ta.lowest(low, lookbackLong)
-longRangePercent = lowestLow > 0 ? ((highestHigh - lowestLow) / lowestLow) * 100 : 100.0
+// === STEP 1: CALCULATE METRICS ===
 
-// Step 2: Calculate SHORT-term volatility (smoothed to reduce noise)
-shortTermRange = (high - low) / close * 100
-avgShortRange = ta.sma(shortTermRange, 20)  // Average of 20 bars
+// 1.1 Price Range (SHORT lookback for box)
+highestHigh = ta.highest(high, LOOKBACK_DETECTION)
+lowestLow = ta.lowest(low, LOOKBACK_DETECTION)
+priceRangePercent = lowestLow > 0 ? ((highestHigh - lowestLow) / lowestLow) * 100 : 100.0
 
-// Step 3: Volume conditions (more lenient)
-volumeMA30 = ta.sma(volume, 30)
-volumeMA60 = ta.sma(volume, 60)
-volumeTrendDown = volumeMA30 < volumeMA60 * 1.15  // Allow volume up to 15% higher
+// 1.2 Market Volatility (for dynamic threshold)
+atr14 = ta.atr(14)
+avgVolatility = close > 0 ? (atr14 / close) * 100 : 0.0
+smoothedVolatility = ta.sma(avgVolatility, 20)
 
-// Step 4: Define accumulation conditions
-isLowVolatility = avgShortRange <= (maxRangePercent * 0.65)  // 65% of max range setting
-isRangeCompression = longRangePercent <= maxRangePercent
-isVolumeCalm = volumeTrendDown or not requireVolDecrease
+// 1.3 Dynamic Threshold
+float effectiveThreshold = smoothedVolatility < 2.0 ? maxRangePercent * 0.5 : smoothedVolatility < 4.0 ? maxRangePercent * 0.75 : maxRangePercent
 
-// Main accumulation condition
-isAccumulation = isLowVolatility and isRangeCompression and isVolumeCalm
+// 1.4 Volume Metrics
+volumeRank = ta.percentrank(volume, 50)
+volumeMA20 = ta.sma(volume, 20)
+volumeMA20_old = volumeMA20[5]
+volumeSlope = volumeMA20_old > 0 ? ((volumeMA20 - volumeMA20_old) / volumeMA20_old) * 100 : 0.0
+maxVolumeLast10 = ta.highest(volume, 10)
 
-// === TOLERANCE SYSTEM: Allow temporary violations ===
-var int violationCount = 0
-var int maxViolations = 3  // Allow 3 bars of violation before closing
+// 1.5 Volume Regime
+string volumeRegime = volumeRank < 30 ? "LOW" : volumeRank < 70 ? "NORMAL" : "HIGH"
 
-// Track accumulation with tolerance
-if isAccumulation
-    // Reset violation count when condition is met
-    violationCount := 0
-    accumBarsCount += 1
-    lastAccumHigh := highestHigh
-    lastAccumLow := lowestLow
+isVolumeDeclining = volumeSlope < -5.0
+hasRecentSpike = maxVolumeLast10 > (volumeMA * 2.0)
 
-    // START: Create box only once
-    if not isAccumulation[1] and not isDrawingAccum
-        accumStartBar := bar_index - accumPeriod + 1
-        currentAccumBox := box.new(accumStartBar, highestHigh, bar_index, lowestLow, border_color=COLOR_INFO, bgcolor=color.new(COLOR_INFO, 92), border_width=1)
-        isDrawingAccum := true
+// 1.6 EMA Slope (sideways check)
+ema20Slope = ema20[5] > 0 ? (ema20 - ema20[5]) / ema20[5] * 100 : 0.0
 
-        // Create label once
-        accumLabel := label.new(bar_index, highestHigh, "ACCUMULATION", color=color.new(COLOR_INFO, 70), textcolor=color.white, style=label.style_label_down, size=size.small)
+// === STEP 2: SCORING SYSTEM (0-10 points) ===
+int accumScore = 0
 
-    // UPDATE: Extend box if accumulation continues
-    else if isDrawingAccum and not na(currentAccumBox)
-        box.set_right(currentAccumBox, bar_index)
-        box.set_top(currentAccumBox, highestHigh)
-        box.set_bottom(currentAccumBox, lowestLow)
+// Score 1: Range compression (0-3 points)
+if priceRangePercent <= effectiveThreshold * 0.5
+    accumScore += 3
+else if priceRangePercent <= effectiveThreshold * 0.75
+    accumScore += 2
+else if priceRangePercent <= effectiveThreshold
+    accumScore += 1
 
-        // Update label position
+// Score 2: Volume regime (0-3 points)
+if volumeRegime == "LOW"
+    accumScore += 2
+if isVolumeDeclining
+    accumScore += 1
+
+// Score 3: No spikes (0-2 points)
+if not hasRecentSpike
+    accumScore += 2
+
+// Score 4: Sideways movement (0-2 points)
+if math.abs(ema20Slope) < 0.5
+    accumScore += 2
+else if math.abs(ema20Slope) < 1.0
+    accumScore += 1
+
+// Final qualification
+bool isQualified = accumScore >= 7
+
+// === STEP 3: CALCULATE STRENGTH (for conditional tolerance) ===
+int accumStrength = 0
+
+// Strength from duration
+if stateBarCount >= 30
+    accumStrength += 4
+else if stateBarCount >= 20
+    accumStrength += 3
+else if stateBarCount >= 10
+    accumStrength += 2
+
+// Strength from score quality
+if accumScore >= 9
+    accumStrength += 3
+else if accumScore >= 8
+    accumStrength += 2
+else if accumScore >= 7
+    accumStrength += 1
+
+// Strength from volume quality
+if volumeRank < 20
+    accumStrength += 3
+else if volumeRank < 30
+    accumStrength += 2
+
+// Determine allowed violations (conditional tolerance)
+int allowedViolations = accumStrength >= 8 ? 5 : accumStrength >= 6 ? 3 : accumStrength >= 4 ? 2 : 1
+
+// === STEP 4: CHECK OVERLAP PREVENTION ===
+bool canCreateNewBox = true
+if array.size(archivedEnds) > 0
+    lastEnd = array.get(archivedEnds, array.size(archivedEnds) - 1)
+    if (bar_index - lastEnd) < MIN_BOX_DISTANCE
+        canCreateNewBox := false
+
+// === STEP 5: STATE MACHINE ===
+
+if accumState == "IDLE"
+    // Reset counters in IDLE
+    if isQualified
+        stateBarCount += 1
+        if stateBarCount >= MIN_DETECTING_BARS and canCreateNewBox
+            // Transition to DETECTING
+            accumState := "DETECTING"
+            accumStartBar := bar_index - LOOKBACK_DETECTION + 1
+            stateBarCount := 0
+    else
+        stateBarCount := 0
+
+else if accumState == "DETECTING"
+    if isQualified
+        stateBarCount += 1
+        if stateBarCount >= MIN_CONFIRMED_BARS
+            // Transition to CONFIRMED
+            accumState := "CONFIRMED"
+            stateBarCount := 0
+            violationCount := 0
+
+            // FREEZE dimensions (critical - no updates after this)
+            frozenTop := highestHigh
+            frozenBottom := lowestLow
+
+            // CREATE BOX with frozen size
+            currentAccumBox := box.new(accumStartBar, frozenTop, bar_index, frozenBottom, border_color=COLOR_INFO, bgcolor=color.new(COLOR_INFO, 92), border_width=1)
+
+            // Create label
+            accumLabel := label.new(bar_index, frozenTop, "ACCUMULATION", color=color.new(COLOR_INFO, 70), textcolor=color.white, style=label.style_label_down, size=size.small)
+
+            isDrawingAccum := true
+    else
+        // Failed detection - back to IDLE
+        accumState := "IDLE"
+        stateBarCount := 0
+
+else if accumState == "CONFIRMED"
+    stateBarCount += 1
+
+    if isQualified
+        // Reset violations when condition is met
+        violationCount := 0
+
+        // Update ONLY right edge (NO top/bottom updates - FROZEN SIZE)
+        if not na(currentAccumBox)
+            box.set_right(currentAccumBox, bar_index)
         if not na(accumLabel)
             label.set_x(accumLabel, bar_index)
-            label.set_y(accumLabel, highestHigh)
-
-else
-    // NOT accumulation - use tolerance system
-    violationCount += 1
-
-    if violationCount > maxViolations
-        // END: Close accumulation after exceeding max violations
-        if isDrawingAccum and accumBarsCount >= minAccumBars
-            // Valid accumulation ended
-            isDrawingAccum := false
-        else if isDrawingAccum and accumBarsCount < minAccumBars
-            // Invalid accumulation (too short) - delete box
-            if not na(currentAccumBox)
-                box.delete(currentAccumBox)
-            if not na(accumLabel)
-                label.delete(accumLabel)
-            isDrawingAccum := false
-            lastAccumHigh := na
-            lastAccumLow := na
-
-        // Reset counters
-        accumBarsCount := 0
-        violationCount := 0
     else
-        // Still within tolerance - continue accumulation tracking
-        if isDrawingAccum
-            accumBarsCount += 1
+        // Violation detected
+        violationCount += 1
 
-            // Continue extending box during tolerance period
+        if violationCount > allowedViolations
+            // Close accumulation
+            if stateBarCount >= minAccumBars
+                // Valid accumulation - proceed to CLOSING
+                accumState := "CLOSING"
+            else
+                // Too short - delete box and return to IDLE
+                if not na(currentAccumBox)
+                    box.delete(currentAccumBox)
+                if not na(accumLabel)
+                    label.delete(accumLabel)
+                accumState := "IDLE"
+                isDrawingAccum := false
+                stateBarCount := 0
+        else
+            // Within tolerance - continue extending
             if not na(currentAccumBox)
                 box.set_right(currentAccumBox, bar_index)
-                // Update high/low if needed
-                if highestHigh > lastAccumHigh
-                    lastAccumHigh := highestHigh
-                    box.set_top(currentAccumBox, highestHigh)
-                if lowestLow < lastAccumLow
-                    lastAccumLow := lowestLow
-                    box.set_bottom(currentAccumBox, lowestLow)
+            if not na(accumLabel)
+                label.set_x(accumLabel, bar_index)
 
-                // Update label
-                if not na(accumLabel)
-                    label.set_x(accumLabel, bar_index)
-                    label.set_y(accumLabel, lastAccumHigh)
+else if accumState == "CLOSING"
+    // Archive the box position
+    array.push(archivedStarts, accumStartBar)
+    array.push(archivedEnds, bar_index)
+    lastBoxEndBar := bar_index
 
+    // Limit array size
+    if array.size(archivedStarts) > 5
+        array.shift(archivedStarts)
+        array.shift(archivedEnds)
+
+    // Store last box levels for breakout detection
+    lastAccumHigh := frozenTop
+    lastAccumLow := frozenBottom
+    accumBarsCount := stateBarCount
+
+    // Transition to CLOSED
+    accumState := "CLOSED"
+    isDrawingAccum := false
+    stateBarCount := 0
+
+else if accumState == "CLOSED"
+    // Cooldown period
+    if (bar_index - lastBoxEndBar) >= MIN_BOX_DISTANCE
+        accumState := "IDLE"
+        stateBarCount := 0
 // ============================================
 // SECTION 6: VOLUME ANALYSIS (OPTIMIZED)
 // ============================================

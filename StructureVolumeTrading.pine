@@ -19,28 +19,29 @@ COLOR_WARNING = color.new(#ffa726, 0)
 COLOR_INFO = color.new(#42a5f5, 0)
 
 // ============================================
-// SECTION 2: INPUT PARAMETERS
+// SECTION 2: INPUT SETTINGS & AUTO TIMEFRAME
 // ============================================
-
-// === AUTO-DETECT TIMEFRAME & ADJUST PARAMETERS ===
-// Automatically adjust parameters based on current timeframe
-
-// Detect current timeframe in minutes
-int tfMinutes = timeframe.in_seconds() / 60
-
-// Auto-adjusted parameters (can be overridden by user inputs)
-int auto_accumPeriod = tfMinutes <= 1 ? 20 : tfMinutes <= 3 ? 18 : tfMinutes <= 5 ? 15 : tfMinutes <= 15 ? 12 : tfMinutes <= 30 ? 10 : tfMinutes <= 60 ? 8 : 6
-
-float auto_maxRange = tfMinutes <= 1 ? 8.0 : tfMinutes <= 3 ? 9.0 : tfMinutes <= 5 ? 10.0 : tfMinutes <= 15 ? 12.0 : tfMinutes <= 30 ? 14.0 : tfMinutes <= 60 ? 15.0 : 18.0
-
-int auto_minBars = tfMinutes <= 1 ? 25 : tfMinutes <= 3 ? 22 : tfMinutes <= 5 ? 20 : tfMinutes <= 15 ? 18 : tfMinutes <= 30 ? 15 : tfMinutes <= 60 ? 12 : 10
 
 // --- Accumulation Settings ---
 string GROUP_ACCUMULATION = "📊 Accumulation Settings"
-accumPeriod = input.int(auto_accumPeriod, "Accumulation Period (Bars)", minval=4, maxval=100, group=GROUP_ACCUMULATION, tooltip="Auto-adjusted per timeframe. Detection lookback for box size")
-maxRangePercent = input.float(auto_maxRange, "Max Range %", minval=5.0, maxval=30.0, step=0.5, group=GROUP_ACCUMULATION, tooltip="Auto-adjusted. Dynamic threshold based on volatility")
+useAutoTF = input.bool(true, "Auto Timeframe Adjustment", group=GROUP_ACCUMULATION, tooltip="Automatically adjust parameters based on chart timeframe")
+accumPeriod_input = input.int(12, "Accumulation Period (Bars)", minval=4, maxval=100, group=GROUP_ACCUMULATION, tooltip="Detection lookback for box size")
+maxRangePercent_input = input.float(12.0, "Max Range %", minval=5.0, maxval=30.0, step=0.5, group=GROUP_ACCUMULATION, tooltip="Dynamic threshold based on volatility")
 requireVolDecrease = input.bool(true, "Require Volume Decrease", group=GROUP_ACCUMULATION)
-minAccumBars = input.int(auto_minBars, "Min Accumulation Bars", minval=10, maxval=50, group=GROUP_ACCUMULATION, tooltip="Auto-adjusted. Minimum bars to qualify as valid accumulation")
+minAccumBars_input = input.int(18, "Min Accumulation Bars", minval=10, maxval=50, group=GROUP_ACCUMULATION, tooltip="Minimum bars to qualify as valid accumulation")
+
+// === AUTO-DETECT TIMEFRAME & ADJUST PARAMETERS ===
+int tfMinutes = timeframe.in_seconds() / 60
+
+// Calculate auto-adjusted values based on timeframe
+int auto_accumPeriod = tfMinutes <= 1 ? 20 : tfMinutes <= 3 ? 18 : tfMinutes <= 5 ? 15 : tfMinutes <= 15 ? 12 : tfMinutes <= 30 ? 10 : tfMinutes <= 60 ? 8 : 6
+float auto_maxRange = tfMinutes <= 1 ? 8.0 : tfMinutes <= 3 ? 9.0 : tfMinutes <= 5 ? 10.0 : tfMinutes <= 15 ? 12.0 : tfMinutes <= 30 ? 14.0 : tfMinutes <= 60 ? 15.0 : 18.0
+int auto_minBars = tfMinutes <= 1 ? 25 : tfMinutes <= 3 ? 22 : tfMinutes <= 5 ? 20 : tfMinutes <= 15 ? 18 : tfMinutes <= 30 ? 15 : tfMinutes <= 60 ? 12 : 10
+
+// Use auto values if enabled, otherwise use user inputs
+accumPeriod = useAutoTF ? auto_accumPeriod : accumPeriod_input
+maxRangePercent = useAutoTF ? auto_maxRange : maxRangePercent_input
+minAccumBars = useAutoTF ? auto_minBars : minAccumBars_input
 
 // --- Volume Settings ---
 string GROUP_VOLUME = "📈 Volume Settings"

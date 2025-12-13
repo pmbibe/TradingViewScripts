@@ -24,10 +24,10 @@ COLOR_INFO = color.new(#42a5f5, 0)
 
 // --- Accumulation Settings ---
 string GROUP_ACCUMULATION = "📊 Accumulation Settings"
-accumPeriod = input.int(30, "Accumulation Period (Bars)", minval=4, maxval=100, group=GROUP_ACCUMULATION, tooltip="Increased for longer accumulation detection")
-maxRangePercent = input.float(12.0, "Max Range %", minval=5.0, maxval=30.0, step=0.5, group=GROUP_ACCUMULATION, tooltip="Tightened for better quality zones")
+accumPeriod = input.int(12, "Accumulation Period (Bars)", minval=4, maxval=50, group=GROUP_ACCUMULATION)
+maxRangePercent = input.float(15.0, "Max Range %", minval=5.0, maxval=30.0, step=0.5, group=GROUP_ACCUMULATION)
 requireVolDecrease = input.bool(true, "Require Volume Decrease", group=GROUP_ACCUMULATION)
-minAccumBars = input.int(20, "Min Accumulation Bars", minval=10, maxval=50, group=GROUP_ACCUMULATION, tooltip="Increased to filter short-term noise")
+minAccumBars = input.int(8, "Min Accumulation Bars", minval=5, maxval=20, group=GROUP_ACCUMULATION, tooltip="Minimum bars to qualify as valid accumulation")
 
 // --- Volume Settings ---
 string GROUP_VOLUME = "📈 Volume Settings"
@@ -169,42 +169,24 @@ cleanupSignalLabels() =>
         label.delete(oldLabel)
 
 // ============================================
-// SECTION 5: ACCUMULATION DETECTION (IMPROVED v2.1)
+// SECTION 5: ACCUMULATION DETECTION (OPTIMIZED)
 // ============================================
 
-// === IMPROVED APPROACH: Longer & Smoother Detection ===
+// Calculate price range
+highestHigh = ta.highest(high, accumPeriod)
+lowestLow = ta.lowest(low, accumPeriod)
+priceRange = lowestLow > 0 ? ((highestHigh - lowestLow) / lowestLow) * 100 : 100.0
 
-// Step 1: Calculate price range over LONGER period
-lookbackLong = 50  // Look at 50 bars for overall range
-highestHigh = ta.highest(high, lookbackLong)
-lowestLow = ta.lowest(low, lookbackLong)
-longRangePercent = lowestLow > 0 ? ((highestHigh - lowestLow) / lowestLow) * 100 : 100.0
+// Check volume trend
+volumeMAFast = ta.sma(volume, accumPeriod)
+volumeMASlow = ta.sma(volume, accumPeriod * 2)
+volumeDecreasing = requireVolDecrease ? volumeMAFast < volumeMASlow * 0.8 : true
 
-// Step 2: Calculate SHORT-term volatility (smoothed to reduce noise)
-shortTermRange = (high - low) / close * 100
-avgShortRange = ta.sma(shortTermRange, 20)  // Average of 20 bars
+// Accumulation condition with quality filter
+isAccumulation = priceRange <= maxRangePercent and volumeDecreasing
 
-// Step 3: Volume conditions (more lenient)
-volumeMA30 = ta.sma(volume, 30)
-volumeMA60 = ta.sma(volume, 60)
-volumeTrendDown = volumeMA30 < volumeMA60 * 1.15  // Allow volume up to 15% higher
-
-// Step 4: Define accumulation conditions
-isLowVolatility = avgShortRange <= (maxRangePercent * 0.65)  // 65% of max range setting
-isRangeCompression = longRangePercent <= maxRangePercent
-isVolumeCalm = volumeTrendDown or not requireVolDecrease
-
-// Main accumulation condition
-isAccumulation = isLowVolatility and isRangeCompression and isVolumeCalm
-
-// === TOLERANCE SYSTEM: Allow temporary violations ===
-var int violationCount = 0
-var int maxViolations = 3  // Allow 3 bars of violation before closing
-
-// Track accumulation with tolerance
+// Track accumulation with single box (OPTIMIZED)
 if isAccumulation
-    // Reset violation count when condition is met
-    violationCount := 0
     accumBarsCount += 1
     lastAccumHigh := highestHigh
     lastAccumLow := lowestLow
@@ -230,47 +212,21 @@ if isAccumulation
             label.set_y(accumLabel, highestHigh)
 
 else
-    // NOT accumulation - use tolerance system
-    violationCount += 1
+    // END: Close accumulation tracking
+    if isDrawingAccum and accumBarsCount >= minAccumBars
+        // Valid accumulation ended
+        isDrawingAccum := false
+    else if isDrawingAccum and accumBarsCount < minAccumBars
+        // Invalid accumulation (too short) - delete box
+        if not na(currentAccumBox)
+            box.delete(currentAccumBox)
+        if not na(accumLabel)
+            label.delete(accumLabel)
+        isDrawingAccum := false
+        lastAccumHigh := na
+        lastAccumLow := na
 
-    if violationCount > maxViolations
-        // END: Close accumulation after exceeding max violations
-        if isDrawingAccum and accumBarsCount >= minAccumBars
-            // Valid accumulation ended
-            isDrawingAccum := false
-        else if isDrawingAccum and accumBarsCount < minAccumBars
-            // Invalid accumulation (too short) - delete box
-            if not na(currentAccumBox)
-                box.delete(currentAccumBox)
-            if not na(accumLabel)
-                label.delete(accumLabel)
-            isDrawingAccum := false
-            lastAccumHigh := na
-            lastAccumLow := na
-
-        // Reset counters
-        accumBarsCount := 0
-        violationCount := 0
-    else
-        // Still within tolerance - continue accumulation tracking
-        if isDrawingAccum
-            accumBarsCount += 1
-
-            // Continue extending box during tolerance period
-            if not na(currentAccumBox)
-                box.set_right(currentAccumBox, bar_index)
-                // Update high/low if needed
-                if highestHigh > lastAccumHigh
-                    lastAccumHigh := highestHigh
-                    box.set_top(currentAccumBox, highestHigh)
-                if lowestLow < lastAccumLow
-                    lastAccumLow := lowestLow
-                    box.set_bottom(currentAccumBox, lowestLow)
-
-                // Update label
-                if not na(accumLabel)
-                    label.set_x(accumLabel, bar_index)
-                    label.set_y(accumLabel, lastAccumHigh)
+    accumBarsCount := 0
 
 // ============================================
 // SECTION 6: VOLUME ANALYSIS (OPTIMIZED)

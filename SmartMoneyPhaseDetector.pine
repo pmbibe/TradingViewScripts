@@ -1,12 +1,12 @@
 // This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // https://creativecommons.org/licenses/by-nc-sa/4.0/
-// Smart Money Phase Detector v1.0
+// Smart Money Phase Detector v1.1 - OPTIMIZED
 // Automatically detect and visualize market phases using volume behavior and price structure
 // Author: Claude AI Assistant
-// Version: 1.0
+// Version: 1.1 - Noise Reduction Update
 
 //@version=5
-indicator("Smart Money Phase Detector", "SMPD", overlay=true, max_labels_count=500, max_lines_count=200, max_boxes_count=50)
+indicator("Smart Money Phase Detector", "SMPD", overlay=true, max_labels_count=100, max_lines_count=50, max_boxes_count=20)
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║                         SECTION 1: INPUT PARAMETERS                          ║
@@ -14,23 +14,23 @@ indicator("Smart Money Phase Detector", "SMPD", overlay=true, max_labels_count=5
 
 // --- Volume Settings ---
 string GROUP_VOLUME = "📊 Volume Settings"
-volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=100, group=GROUP_VOLUME, tooltip="Moving average period for volume analysis")
-volume_spike_threshold = input.float(2.0, "Volume Spike Threshold", minval=1.1, maxval=5.0, step=0.1, group=GROUP_VOLUME, tooltip="Multiplier to detect volume spikes")
+volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=100, group=GROUP_VOLUME)
+volume_spike_threshold = input.float(2.0, "Volume Spike Threshold", minval=1.1, maxval=5.0, step=0.1, group=GROUP_VOLUME)
 volume_fast_length = input.int(5, "Volume Fast MA", minval=2, maxval=20, group=GROUP_VOLUME)
 volume_smoothness_length = input.int(10, "Volume Smoothness Period", minval=5, maxval=30, group=GROUP_VOLUME)
 
 // --- Spread Settings ---
 string GROUP_SPREAD = "📏 Spread Settings"
 spread_ma_length = input.int(20, "Spread MA Length", minval=5, maxval=50, group=GROUP_SPREAD)
-narrow_threshold = input.float(0.8, "Narrow Spread Threshold", minval=0.3, maxval=1.0, step=0.05, group=GROUP_SPREAD, tooltip="Spread ratio below this = narrow")
-wide_threshold = input.float(1.3, "Wide Spread Threshold", minval=1.0, maxval=2.0, step=0.05, group=GROUP_SPREAD, tooltip="Spread ratio above this = wide")
+narrow_threshold = input.float(0.8, "Narrow Spread Threshold", minval=0.3, maxval=1.0, step=0.05, group=GROUP_SPREAD)
+wide_threshold = input.float(1.3, "Wide Spread Threshold", minval=1.0, maxval=2.0, step=0.05, group=GROUP_SPREAD)
 
 // --- Phase Detection Settings ---
 string GROUP_PHASE = "🔄 Phase Detection"
-accumulation_min_bars = input.int(10, "Min Accumulation Bars", minval=5, maxval=50, group=GROUP_PHASE, tooltip="Minimum bars to confirm accumulation")
+accumulation_min_bars = input.int(10, "Min Accumulation Bars", minval=5, maxval=50, group=GROUP_PHASE)
 markdown_min_bars = input.int(3, "Min Markdown Bars", minval=2, maxval=10, group=GROUP_PHASE)
-confidence_threshold = input.int(70, "Min Confidence %", minval=30, maxval=95, group=GROUP_PHASE, tooltip="Minimum confidence to confirm phase")
-range_tolerance = input.float(15.0, "Range Tolerance %", minval=5.0, maxval=30.0, step=1.0, group=GROUP_PHASE, tooltip="Max price range for accumulation detection")
+confidence_threshold = input.int(70, "Min Confidence %", minval=30, maxval=95, group=GROUP_PHASE)
+range_tolerance = input.float(15.0, "Range Tolerance %", minval=5.0, maxval=30.0, step=1.0, group=GROUP_PHASE)
 
 // --- Asset Classification Settings ---
 string GROUP_ASSET = "🏷️ Asset Classification"
@@ -38,16 +38,23 @@ classification_lookback = input.int(100, "Classification Lookback", minval=50, m
 smooth_threshold = input.float(0.6, "Smooth Volume Threshold", minval=0.3, maxval=0.9, step=0.05, group=GROUP_ASSET)
 spike_count_threshold = input.int(10, "Max Spikes for Smooth", minval=3, maxval=30, group=GROUP_ASSET)
 
+// --- Noise Reduction Settings (NEW) ---
+string GROUP_NOISE = "🔇 Noise Reduction"
+dot_filter_mode = input.string("Significant Only", "Close Position Dots", options=["All Bars", "Significant Only", "Extreme Only", "None"], group=GROUP_NOISE, tooltip="All=every bar, Significant=volume>MA or extreme close, Extreme=only >0.8 or <0.2")
+min_volume_for_dot = input.float(1.0, "Min Volume Ratio for Dot", minval=0.5, maxval=2.0, step=0.1, group=GROUP_NOISE, tooltip="Show dot only when volume >= this * MA")
+extreme_close_threshold = input.float(0.2, "Extreme Close Threshold", minval=0.1, maxval=0.3, step=0.05, group=GROUP_NOISE, tooltip="Close position < this or > (1-this) = extreme")
+transition_cooldown = input.int(10, "Min Bars Between Signals", minval=3, maxval=30, group=GROUP_NOISE, tooltip="Minimum bars between transition arrows")
+require_phase_confirmation = input.bool(true, "Require Phase for Transition", group=GROUP_NOISE, tooltip="Only show transition if currently in expected phase")
+
 // --- Visual Options ---
 string GROUP_VISUAL = "🎨 Visual Settings"
-show_background = input.bool(true, "Show Phase Background Color", group=GROUP_VISUAL)
-show_close_dots = input.bool(true, "Show Close Position Dots", group=GROUP_VISUAL)
-show_spread_bands = input.bool(true, "Show Spread Bands", group=GROUP_VISUAL)
+show_background = input.bool(true, "Show Phase Background", group=GROUP_VISUAL)
+show_spread_bands = input.bool(false, "Show Spread Bands", group=GROUP_VISUAL)
 show_info_table = input.bool(true, "Show Info Table", group=GROUP_VISUAL)
 show_transition_arrows = input.bool(true, "Show Transition Arrows", group=GROUP_VISUAL)
 show_divergence = input.bool(true, "Show Volume Divergence", group=GROUP_VISUAL)
 table_position = input.string("Top Right", "Info Table Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=GROUP_VISUAL)
-dot_size = input.string("Small", "Close Position Dot Size", options=["Tiny", "Small", "Normal"], group=GROUP_VISUAL)
+dot_size = input.string("Tiny", "Dot Size", options=["Tiny", "Small", "Normal"], group=GROUP_VISUAL)
 
 // --- Alert Settings ---
 string GROUP_ALERTS = "🔔 Alerts"
@@ -66,22 +73,15 @@ color COLOR_ACCUMULATION_BG = color.new(color.yellow, 90)
 color COLOR_MARKUP_BG = color.new(color.green, 90)
 color COLOR_DISTRIBUTION_BG = color.new(color.orange, 90)
 
-// VQI Histogram Colors
-color COLOR_VQI_ORGANIC = color.new(#26a69a, 0)      // Green - organic buying
-color COLOR_VQI_INSTITUTIONAL = color.new(#2196f3, 0) // Blue - institutional spike
-color COLOR_VQI_ACCUMULATION = color.new(#ffeb3b, 0)  // Yellow - accumulation
-color COLOR_VQI_SELLING = color.new(#ef5350, 0)       // Red - selling
-color COLOR_VQI_NEUTRAL = color.new(#78909c, 0)       // Gray - neutral
-
 // Close Position Dot Colors
-color COLOR_STRONG_BUYING = color.new(#00695c, 0)     // Dark green
-color COLOR_BUYING = color.new(#4caf50, 0)            // Light green
-color COLOR_NEUTRAL = color.new(#9e9e9e, 0)           // Gray
-color COLOR_SELLING = color.new(#f44336, 0)           // Red
+color COLOR_STRONG_BUYING = color.new(#00695c, 0)
+color COLOR_BUYING = color.new(#4caf50, 0)
+color COLOR_NEUTRAL = color.new(#9e9e9e, 0)
+color COLOR_SELLING = color.new(#f44336, 0)
 
 // Spread Band Colors
-color COLOR_NARROW_SPREAD = color.new(#00bcd4, 85)    // Light cyan
-color COLOR_WIDE_SPREAD = color.new(#ff5722, 85)      // Light red
+color COLOR_NARROW_SPREAD = color.new(#00bcd4, 85)
+color COLOR_WIDE_SPREAD = color.new(#ff5722, 85)
 
 // Phase Constants
 int PHASE_UNKNOWN = 0
@@ -94,38 +94,22 @@ int PHASE_DISTRIBUTION = 4
 // ║                      SECTION 3: VOLUME ANALYSIS MODULE                       ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// === 3A: Volume Quality Index (VQI) ===
-// VQI measures volume quality by combining volume ratio with smoothness
-
 // Calculate volume moving averages
 float volume_ma = ta.sma(volume, volume_ma_length)
 float volume_ma_fast = ta.sma(volume, volume_fast_length)
 
-// Volume ratio: current volume relative to average
+// Volume ratio
 float volume_ratio = volume_ma > 0 ? volume / volume_ma : 1.0
 
-// Volume smoothness: measures consistency (1 = smooth, 0 = erratic)
+// Volume smoothness
 float volume_stdev = ta.stdev(volume, volume_smoothness_length)
 float volume_avg = ta.sma(volume, volume_smoothness_length)
 float volume_smoothness = volume_avg > 0 ? math.max(0, 1 - (volume_stdev / volume_avg)) : 0.5
 
-// Calculate VQI
+// VQI
 float vqi = volume_ratio * volume_smoothness
 
-// Determine VQI color based on conditions
-color vqi_color = COLOR_VQI_NEUTRAL
-if vqi > 1.5 and close < open
-    vqi_color := COLOR_VQI_SELLING
-else if vqi > 2.0 and volume_smoothness < 0.5
-    vqi_color := COLOR_VQI_INSTITUTIONAL
-else if vqi > 1.2 and volume_smoothness > 0.7
-    vqi_color := COLOR_VQI_ORGANIC
-else if vqi < 0.7
-    vqi_color := COLOR_VQI_ACCUMULATION
-
-// === 3B: Volume Momentum ===
-// Oscillator showing volume trend strength (-100 to +100)
-
+// Volume Momentum
 float volume_ma_slow = ta.sma(volume, volume_ma_length)
 float raw_volume_momentum = volume_ma_slow > 0 ? 100 * (volume_ma_fast - volume_ma_slow) / volume_ma_slow : 0.0
 float volume_momentum = math.max(-100, math.min(100, raw_volume_momentum))
@@ -134,15 +118,14 @@ float volume_momentum = math.max(-100, math.min(100, raw_volume_momentum))
 // ║                      SECTION 4: PRICE STRUCTURE MODULE                       ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// === 4A: Spread Analysis ===
+// Spread Analysis
 float spread = high - low
 float spread_ma = ta.sma(spread, spread_ma_length)
 float spread_ratio = spread_ma > 0 ? spread / spread_ma : 1.0
 bool narrow_spread = spread_ratio < narrow_threshold
 bool wide_spread = spread_ratio > wide_threshold
 
-// === 4B: Close Position Index ===
-// Where did price close within the bar's range? (0 = at low, 1 = at high)
+// Close Position Index
 float bar_range = high - low
 float close_position = bar_range > 0 ? (close - low) / bar_range : 0.5
 
@@ -152,12 +135,7 @@ bool is_buying = close_position >= 0.5 and close_position <= 0.7
 bool is_neutral_close = close_position >= 0.3 and close_position < 0.5
 bool is_strong_selling = close_position < 0.3
 
-// Get dot color based on close position
-color close_dot_color = is_strong_buying ? COLOR_STRONG_BUYING :
-                        is_buying ? COLOR_BUYING :
-                        is_neutral_close ? COLOR_NEUTRAL : COLOR_SELLING
-
-// === 4C: Spread Bands ===
+// Spread Bands
 float upper_band = close + (spread_ma * 1.5)
 float lower_band = close - (spread_ma * 1.5)
 
@@ -165,97 +143,65 @@ float lower_band = close - (spread_ma * 1.5)
 // ║                       SECTION 5: PHASE DETECTION LOGIC                       ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// === Helper Functions ===
-
-// Count consecutive bars meeting a condition
+// Helper: Count consecutive bars
 f_count_consecutive(bool condition) =>
     var int count = 0
     count := condition ? count + 1 : 0
     count
 
-// Check if ATR is declining
+// ATR analysis
 float atr_current = ta.atr(14)
 float atr_prev = ta.atr(14)[5]
 bool atr_declining = atr_current < atr_prev
 
-// Calculate range percentage over lookback period
+// Range calculation
 float highest_high = ta.highest(high, accumulation_min_bars)
 float lowest_low = ta.lowest(low, accumulation_min_bars)
 float range_percent = lowest_low > 0 ? ((highest_high - lowest_low) / lowest_low) * 100 : 0
 
-// === 5A: MARKDOWN Phase Detection ===
-// Characteristics: High volume, wide spreads, closes near low, consecutive lower lows
-
+// === MARKDOWN Phase ===
 bool markdown_volume = volume > volume_ma * volume_spike_threshold
 bool markdown_spread = spread_ratio > wide_threshold
 bool markdown_close = close_position < 0.3
 bool markdown_downtrend = close < close[1]
 bool markdown_lower_lows = low < low[1]
-
-// All conditions combined
 bool markdown_conditions = markdown_volume and markdown_spread and markdown_close and markdown_downtrend and markdown_lower_lows
-
-// Count consecutive markdown bars
 int markdown_consecutive = f_count_consecutive(markdown_conditions)
 bool is_markdown = markdown_consecutive >= markdown_min_bars
 
-// === 5B: ACCUMULATION Phase Detection ===
-// Characteristics: Low volume, narrow spreads, declining ATR, tight range
-
+// === ACCUMULATION Phase ===
 bool accum_low_volume = volume < volume_ma * 0.7
 bool accum_narrow_spread = spread_ratio < narrow_threshold
 bool accum_tight_range = range_percent < range_tolerance
 bool accum_no_breakout = close < ta.highest(high, 20)[1]
-
-// ATR declining check (look back 5 bars)
 bool accum_atr_declining = atr_declining
-
-// All accumulation conditions
 bool accumulation_conditions = accum_low_volume and accum_narrow_spread and accum_tight_range
-
-// Count consecutive accumulation bars
 int accum_consecutive = f_count_consecutive(accumulation_conditions)
 bool is_accumulation = accum_consecutive >= accumulation_min_bars and accum_atr_declining
 
-// === 5C: MARKUP Phase Detection ===
-// Characteristics: Breakout from accumulation, increasing volume, strong closes
-
+// === MARKUP Phase ===
 bool markup_breakout = close > ta.highest(high, 20)[1]
 bool markup_volume_increasing = volume_ma_fast > volume_ma_slow
 bool markup_wide_spread = spread_ratio > 1.2
 bool markup_strong_close = close_position > 0.7
 bool markup_uptrend = close > close[1]
 bool markup_higher_highs = high > high[1]
-
-// Combined markup conditions
 bool markup_conditions = markup_breakout and markup_volume_increasing and markup_strong_close and markup_uptrend
-
-// Track markup phase
 var bool was_accumulation = false
 was_accumulation := is_accumulation ? true : (is_markdown ? false : was_accumulation)
-
 bool is_markup = markup_conditions and was_accumulation
 
-// === 5D: DISTRIBUTION Phase Detection ===
-// Characteristics: Near highs, volume spikes without price progress, declining close position
-
-// Near recent high (within 5%)
+// === DISTRIBUTION Phase ===
 float highest_50 = ta.highest(high, 50)
 bool near_high = highest_50 > 0 ? (high >= highest_50 * 0.95) : false
-
-// Volume spike without price progress
 bool volume_spike = volume > volume_ma * 2
 bool no_price_progress = math.abs(high - high[1]) < spread_ma * 0.2
-
-// Close position declining
 float close_pos_avg_current = ta.sma(close_position, 5)
 float close_pos_avg_prev = ta.sma(close_position, 5)[5]
 bool close_pos_declining = close_pos_avg_current < close_pos_avg_prev
 
-// Multiple upper wicks
 float upper_wick = high - math.max(open, close)
 float wick_ratio = bar_range > 0 ? upper_wick / bar_range : 0
-bool has_upper_wick = wick_ratio > 0.3
 int upper_wick_count = 0
 for i = 0 to 4
     if bar_range[i] > 0
@@ -264,20 +210,16 @@ for i = 0 to 4
             upper_wick_count += 1
 bool multiple_upper_wicks = upper_wick_count >= 3
 
-// High volume variance
 float vol_variance = volume_avg > 0 ? volume_stdev / volume_avg : 0
 bool high_vol_variance = vol_variance > 0.5
-
-// Combined distribution conditions
 bool distribution_conditions = near_high and (volume_spike or high_vol_variance) and (close_pos_declining or multiple_upper_wicks)
 bool is_distribution = distribution_conditions
 
-// === 5E: Determine Current Phase ===
+// === Determine Current Phase ===
 var int current_phase = PHASE_UNKNOWN
 var int bars_in_phase = 0
 var int prev_phase = PHASE_UNKNOWN
 
-// Phase priority: Markdown > Distribution > Markup > Accumulation > Unknown
 int detected_phase = PHASE_UNKNOWN
 if is_markdown
     detected_phase := PHASE_MARKDOWN
@@ -288,7 +230,6 @@ else if is_markup
 else if is_accumulation
     detected_phase := PHASE_ACCUMULATION
 
-// Update phase tracking
 if detected_phase != PHASE_UNKNOWN
     if detected_phase != current_phase
         prev_phase := current_phase
@@ -303,28 +244,20 @@ else
 // ║                       SECTION 6: ASSET TYPE CLASSIFIER                       ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// Calculate average smoothness over lookback period
 float avg_smoothness = ta.sma(volume_smoothness, classification_lookback)
-
-// Count volume spikes in lookback period
 int spike_count = 0
 for i = 0 to math.min(classification_lookback - 1, bar_index)
     if volume[i] > volume_ma[i] * 2.5
         spike_count += 1
 
-// Classify asset type
 bool is_smooth_volume = avg_smoothness > smooth_threshold and spike_count < spike_count_threshold
 string asset_type = is_smooth_volume ? "Smooth Volume" : "Spikey Volume"
-string asset_example = is_smooth_volume ? "(PIPPIN Type)" : "(BEAT Type)"
-
-// Volume Character Score (0-100, higher = smoother)
 float volume_character_score = math.max(0, math.min(100, avg_smoothness * 100))
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║                       SECTION 7: PHASE CONFIDENCE SCORE                      ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// Calculate confidence based on conditions met and stability
 f_calculate_confidence(int phase) =>
     float conditions_score = 0.0
     int total_conditions = 5
@@ -339,57 +272,70 @@ f_calculate_confidence(int phase) =>
     else if phase == PHASE_DISTRIBUTION
         met_conditions := (near_high ? 1 : 0) + (volume_spike ? 1 : 0) + (close_pos_declining ? 1 : 0) + (multiple_upper_wicks ? 1 : 0) + (high_vol_variance ? 1 : 0)
 
-    // Base score from conditions (70% weight)
     conditions_score := (float(met_conditions) / float(total_conditions)) * 70.0
-
-    // Stability bonus (30% weight, max 10 bars)
     float stability_bonus = math.min(bars_in_phase, 10) * 3.0
-
     float total = conditions_score + stability_bonus
     math.min(100, total)
 
 float phase_confidence = f_calculate_confidence(current_phase)
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║                        SECTION 8: TRANSITION ALERTS                          ║
+// ║                  SECTION 8: TRANSITION ALERTS (WITH COOLDOWN)                ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// === 8A: Accumulation to Markup Transition Warning ===
-// Early signs: volume starting to increase, spread widening, close position improving
+// Track last signal bar for cooldown
+var int last_markup_signal_bar = 0
+var int last_markdown_signal_bar = 0
 
-bool accum_markup_volume = volume > volume_ma and volume < volume_ma * 1.5
-bool accum_markup_spread = spread_ratio > 0.9 and spread_ratio < 1.2
-bool accum_markup_close = close_position > 0.55 and close_position < 0.75
-bool accum_markup_testing = high > ta.highest(high, 10)[1] * 0.98
+// Accumulation → Markup transition (STRICTER CONDITIONS)
+bool accum_markup_volume = volume > volume_ma * 1.2 and volume < volume_ma * 2.0
+bool accum_markup_spread = spread_ratio > 1.0 and spread_ratio < 1.5
+bool accum_markup_close = close_position > 0.6
+bool accum_markup_testing = high > ta.highest(high, 10)[1] * 0.99
+bool accum_markup_momentum = volume_momentum > 10
 
-bool transition_to_markup = current_phase == PHASE_ACCUMULATION and
-                            accum_markup_volume and
-                            accum_markup_spread and
-                            accum_markup_close and
-                            accum_markup_testing
+bool base_transition_to_markup = accum_markup_volume and accum_markup_spread and accum_markup_close and accum_markup_testing and accum_markup_momentum
 
-// === 8B: Distribution to Markdown Transition Warning ===
-// Early signs: volume spike with weak close, large upper wick, declining close
+// Apply phase requirement if enabled
+bool phase_ok_for_markup = require_phase_confirmation ? (current_phase == PHASE_ACCUMULATION or prev_phase == PHASE_ACCUMULATION) : true
 
-bool dist_markdown_volume = volume > volume_ma * 1.5
-bool dist_markdown_close = close_position < 0.5
-bool dist_markdown_wick = wick_ratio > 0.4
-bool dist_markdown_decline = close < close[1]
+// Apply cooldown
+bool cooldown_ok_for_markup = (bar_index - last_markup_signal_bar) >= transition_cooldown
 
-bool transition_to_markdown = current_phase == PHASE_DISTRIBUTION and
-                              dist_markdown_volume and
-                              dist_markdown_close and
-                              (dist_markdown_wick or dist_markdown_decline)
+bool transition_to_markup = base_transition_to_markup and phase_ok_for_markup and cooldown_ok_for_markup
+
+// Update last signal bar
+if transition_to_markup
+    last_markup_signal_bar := bar_index
+
+// Distribution → Markdown transition (STRICTER CONDITIONS)
+bool dist_markdown_volume = volume > volume_ma * 1.8
+bool dist_markdown_close = close_position < 0.4
+bool dist_markdown_wick = wick_ratio > 0.35
+bool dist_markdown_decline = close < close[1] and close[1] < close[2]
+bool dist_markdown_momentum = volume_momentum < -5
+
+bool base_transition_to_markdown = dist_markdown_volume and dist_markdown_close and (dist_markdown_wick or dist_markdown_decline) and dist_markdown_momentum
+
+// Apply phase requirement if enabled
+bool phase_ok_for_markdown = require_phase_confirmation ? (current_phase == PHASE_DISTRIBUTION or near_high) : true
+
+// Apply cooldown
+bool cooldown_ok_for_markdown = (bar_index - last_markdown_signal_bar) >= transition_cooldown
+
+bool transition_to_markdown = base_transition_to_markdown and phase_ok_for_markdown and cooldown_ok_for_markdown
+
+// Update last signal bar
+if transition_to_markdown
+    last_markdown_signal_bar := bar_index
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║                       SECTION 9: DIVERGENCE DETECTION                        ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// === 9A: Find Swing Highs ===
 int pivot_lookback = 5
 bool is_pivot_high = high == ta.highest(high, pivot_lookback * 2 + 1)[pivot_lookback]
 
-// Track last two swing highs
 var float swing_high_1 = na
 var float swing_high_1_vol = na
 var int swing_high_1_bar = na
@@ -405,16 +351,12 @@ if is_pivot_high[pivot_lookback]
     swing_high_1_vol := volume[pivot_lookback]
     swing_high_1_bar := bar_index - pivot_lookback
 
-// === 9B: Volume-Price Divergence Detection ===
-// Price making higher high but volume making lower high
 bool price_higher_high = not na(swing_high_1) and not na(swing_high_2) and swing_high_1 > swing_high_2
-bool volume_lower_high = not na(swing_high_1_vol) and not na(swing_high_2_vol) and swing_high_1_vol < swing_high_2_vol
-bool sufficient_distance = not na(swing_high_1_bar) and not na(swing_high_2_bar) and (swing_high_1_bar - swing_high_2_bar) > 10
+bool volume_lower_high = not na(swing_high_1_vol) and not na(swing_high_2_vol) and swing_high_1_vol < swing_high_2_vol * 0.8  // 20% lower volume
+bool sufficient_distance = not na(swing_high_1_bar) and not na(swing_high_2_bar) and (swing_high_1_bar - swing_high_2_bar) > 15
 
 bool volume_price_divergence = price_higher_high and volume_lower_high and sufficient_distance
 
-// === 9C: Close Position Divergence ===
-// Volume increasing but close position decreasing
 float vol_change = volume_ma_fast - volume_ma_fast[5]
 float close_pos_change = close_pos_avg_current - close_pos_avg_prev
 bool close_position_divergence = vol_change > 0 and close_pos_change < -0.1
@@ -423,14 +365,12 @@ bool close_position_divergence = vol_change > 0 and close_pos_change < -0.1
 // ║                     SECTION 10: PHASE DURATION TRACKING                      ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// Track average duration of each phase (last 10 occurrences)
 var array<int> markdown_durations = array.new_int(0)
 var array<int> accum_durations = array.new_int(0)
 var array<int> markup_durations = array.new_int(0)
 var array<int> dist_durations = array.new_int(0)
 var int phase_start_bar = bar_index
 
-// Detect phase change and record duration
 bool phase_changed = current_phase != current_phase[1] and current_phase[1] != PHASE_UNKNOWN
 if phase_changed
     int duration = bar_index - phase_start_bar
@@ -452,7 +392,6 @@ if phase_changed
             array.shift(dist_durations)
     phase_start_bar := bar_index
 
-// Calculate average durations
 f_avg_duration(array<int> arr) =>
     if array.size(arr) > 0
         array.avg(arr)
@@ -464,7 +403,6 @@ float avg_accum_duration = f_avg_duration(accum_durations)
 float avg_markup_duration = f_avg_duration(markup_durations)
 float avg_dist_duration = f_avg_duration(dist_durations)
 
-// Estimate remaining bars in current phase
 float current_avg_duration = current_phase == PHASE_MARKDOWN ? avg_markdown_duration :
                              current_phase == PHASE_ACCUMULATION ? avg_accum_duration :
                              current_phase == PHASE_MARKUP ? avg_markup_duration :
@@ -473,10 +411,26 @@ float current_avg_duration = current_phase == PHASE_MARKDOWN ? avg_markdown_dura
 float estimated_remaining = math.max(0, current_avg_duration - bars_in_phase)
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║                          SECTION 11: VISUAL OUTPUT                           ║
+// ║                   SECTION 11: NOISE FILTER FOR DOTS                          ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// === 11A: Phase Background Color ===
+// Determine if we should show dot based on filter mode
+bool is_extreme_close = close_position < extreme_close_threshold or close_position > (1 - extreme_close_threshold)
+bool is_significant_volume = volume_ratio >= min_volume_for_dot
+bool is_significant_bar = is_significant_volume or is_extreme_close
+
+bool show_dot_all = dot_filter_mode == "All Bars"
+bool show_dot_significant = dot_filter_mode == "Significant Only" and is_significant_bar
+bool show_dot_extreme = dot_filter_mode == "Extreme Only" and is_extreme_close
+bool show_dot_none = dot_filter_mode == "None"
+
+bool should_show_dot = (show_dot_all or show_dot_significant or show_dot_extreme) and not show_dot_none
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                          SECTION 12: VISUAL OUTPUT                           ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// === 12A: Phase Background Color ===
 color phase_bg_color = current_phase == PHASE_MARKDOWN ? COLOR_MARKDOWN_BG :
                        current_phase == PHASE_ACCUMULATION ? COLOR_ACCUMULATION_BG :
                        current_phase == PHASE_MARKUP ? COLOR_MARKUP_BG :
@@ -484,44 +438,42 @@ color phase_bg_color = current_phase == PHASE_MARKDOWN ? COLOR_MARKDOWN_BG :
 
 bgcolor(show_background ? phase_bg_color : na, title="Phase Background")
 
-// === 11B: Spread Bands ===
+// === 12B: Spread Bands ===
 color spread_band_color = narrow_spread ? COLOR_NARROW_SPREAD : (wide_spread ? COLOR_WIDE_SPREAD : na)
 p_upper = plot(show_spread_bands ? upper_band : na, "Upper Spread Band", color=color.new(color.gray, 70), linewidth=1)
 p_lower = plot(show_spread_bands ? lower_band : na, "Lower Spread Band", color=color.new(color.gray, 70), linewidth=1)
 fill(p_upper, p_lower, color=show_spread_bands ? spread_band_color : na, title="Spread Fill")
 
-// === 11C: Close Position Dots ===
-// Note: plotshape size requires const string, so we use separate conditions for each size option
-
+// === 12C: Close Position Dots (FILTERED) ===
 bool use_tiny = dot_size == "Tiny"
 bool use_small = dot_size == "Small"
 bool use_normal = dot_size == "Normal"
 
-// Strong Buying dots
-plotshape(show_close_dots and is_strong_buying and use_tiny, "Strong Buying Tiny", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=size.tiny)
-plotshape(show_close_dots and is_strong_buying and use_small, "Strong Buying Small", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=size.small)
-plotshape(show_close_dots and is_strong_buying and use_normal, "Strong Buying Normal", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=size.normal)
+// Strong Buying dots (filtered)
+plotshape(should_show_dot and is_strong_buying and use_tiny, "Strong Buying", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=size.tiny)
+plotshape(should_show_dot and is_strong_buying and use_small, "Strong Buying", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=size.small)
+plotshape(should_show_dot and is_strong_buying and use_normal, "Strong Buying", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=size.normal)
 
-// Buying dots
-plotshape(show_close_dots and is_buying and use_tiny, "Buying Tiny", shape.circle, location.abovebar, COLOR_BUYING, size=size.tiny)
-plotshape(show_close_dots and is_buying and use_small, "Buying Small", shape.circle, location.abovebar, COLOR_BUYING, size=size.small)
-plotshape(show_close_dots and is_buying and use_normal, "Buying Normal", shape.circle, location.abovebar, COLOR_BUYING, size=size.normal)
+// Buying dots (filtered)
+plotshape(should_show_dot and is_buying and use_tiny, "Buying", shape.circle, location.abovebar, COLOR_BUYING, size=size.tiny)
+plotshape(should_show_dot and is_buying and use_small, "Buying", shape.circle, location.abovebar, COLOR_BUYING, size=size.small)
+plotshape(should_show_dot and is_buying and use_normal, "Buying", shape.circle, location.abovebar, COLOR_BUYING, size=size.normal)
 
-// Neutral dots
-plotshape(show_close_dots and is_neutral_close and use_tiny, "Neutral Tiny", shape.circle, location.abovebar, COLOR_NEUTRAL, size=size.tiny)
-plotshape(show_close_dots and is_neutral_close and use_small, "Neutral Small", shape.circle, location.abovebar, COLOR_NEUTRAL, size=size.small)
-plotshape(show_close_dots and is_neutral_close and use_normal, "Neutral Normal", shape.circle, location.abovebar, COLOR_NEUTRAL, size=size.normal)
+// Neutral dots (filtered)
+plotshape(should_show_dot and is_neutral_close and use_tiny, "Neutral", shape.circle, location.abovebar, COLOR_NEUTRAL, size=size.tiny)
+plotshape(should_show_dot and is_neutral_close and use_small, "Neutral", shape.circle, location.abovebar, COLOR_NEUTRAL, size=size.small)
+plotshape(should_show_dot and is_neutral_close and use_normal, "Neutral", shape.circle, location.abovebar, COLOR_NEUTRAL, size=size.normal)
 
-// Selling dots
-plotshape(show_close_dots and is_strong_selling and use_tiny, "Selling Tiny", shape.circle, location.belowbar, COLOR_SELLING, size=size.tiny)
-plotshape(show_close_dots and is_strong_selling and use_small, "Selling Small", shape.circle, location.belowbar, COLOR_SELLING, size=size.small)
-plotshape(show_close_dots and is_strong_selling and use_normal, "Selling Normal", shape.circle, location.belowbar, COLOR_SELLING, size=size.normal)
+// Selling dots (filtered)
+plotshape(should_show_dot and is_strong_selling and use_tiny, "Selling", shape.circle, location.belowbar, COLOR_SELLING, size=size.tiny)
+plotshape(should_show_dot and is_strong_selling and use_small, "Selling", shape.circle, location.belowbar, COLOR_SELLING, size=size.small)
+plotshape(should_show_dot and is_strong_selling and use_normal, "Selling", shape.circle, location.belowbar, COLOR_SELLING, size=size.normal)
 
-// === 11D: Transition Arrows ===
-plotshape(show_transition_arrows and transition_to_markup, "Markup Transition", shape.triangleup, location.belowbar, color.green, size=size.small, text="↑")
-plotshape(show_transition_arrows and transition_to_markdown, "Markdown Transition", shape.triangledown, location.abovebar, color.red, size=size.small, text="↓")
+// === 12D: Transition Arrows (WITH COOLDOWN) ===
+plotshape(show_transition_arrows and transition_to_markup, "Markup Signal", shape.triangleup, location.belowbar, color.new(color.green, 0), size=size.normal, text="MARKUP")
+plotshape(show_transition_arrows and transition_to_markdown, "Markdown Signal", shape.triangledown, location.abovebar, color.new(color.red, 0), size=size.normal, text="MARKDOWN")
 
-// === 11E: Volume Divergence Labels ===
+// === 12E: Volume Divergence Labels ===
 var label div_label = na
 if show_divergence and volume_price_divergence and is_pivot_high[pivot_lookback]
     label.delete(div_label)
@@ -531,7 +483,7 @@ if show_divergence and volume_price_divergence and is_pivot_high[pivot_lookback]
                            style=label.style_label_down,
                            size=size.small)
 
-// === 11F: Divergence Lines ===
+// === 12F: Divergence Lines ===
 var line div_line = na
 if show_divergence and volume_price_divergence and not na(swing_high_1_bar) and not na(swing_high_2_bar)
     line.delete(div_line)
@@ -540,7 +492,7 @@ if show_divergence and volume_price_divergence and not na(swing_high_1_bar) and 
                          style=line.style_dotted,
                          width=2)
 
-// === 11G: Info Table ===
+// === 12G: Info Table ===
 var table info_table = na
 if show_info_table
     table_pos = table_position == "Top Right" ? position.top_right :
@@ -549,93 +501,74 @@ if show_info_table
 
     info_table := table.new(table_pos, 2, 8, bgcolor=color.new(color.black, 80), border_width=1, border_color=color.gray)
 
-    // Phase name with color
     string phase_name = current_phase == PHASE_MARKDOWN ? "MARKDOWN" :
                         current_phase == PHASE_ACCUMULATION ? "ACCUMULATION" :
                         current_phase == PHASE_MARKUP ? "MARKUP" :
-                        current_phase == PHASE_DISTRIBUTION ? "DISTRIBUTION" : "UNKNOWN"
+                        current_phase == PHASE_DISTRIBUTION ? "DISTRIBUTION" : "SCANNING..."
 
     color phase_text_color = current_phase == PHASE_MARKDOWN ? color.red :
                              current_phase == PHASE_ACCUMULATION ? color.yellow :
                              current_phase == PHASE_MARKUP ? color.green :
                              current_phase == PHASE_DISTRIBUTION ? color.orange : color.gray
 
-    // Header
     table.cell(info_table, 0, 0, "📊 SMART MONEY", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
     table.cell(info_table, 1, 0, "PHASE DETECTOR", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.small)
 
-    // Current Phase
     table.cell(info_table, 0, 1, "Phase:", text_color=color.white, text_size=size.small)
     table.cell(info_table, 1, 1, phase_name, text_color=phase_text_color, text_size=size.small)
 
-    // Confidence
     table.cell(info_table, 0, 2, "Confidence:", text_color=color.white, text_size=size.small)
     color conf_color = phase_confidence >= 80 ? color.green : (phase_confidence >= 60 ? color.yellow : color.red)
     table.cell(info_table, 1, 2, str.tostring(math.round(phase_confidence)) + "%", text_color=conf_color, text_size=size.small)
 
-    // Volume Type
     table.cell(info_table, 0, 3, "Volume Type:", text_color=color.white, text_size=size.small)
     table.cell(info_table, 1, 3, asset_type, text_color=is_smooth_volume ? color.teal : color.purple, text_size=size.small)
 
-    // Bars in Phase
     table.cell(info_table, 0, 4, "Bars in Phase:", text_color=color.white, text_size=size.small)
     table.cell(info_table, 1, 4, str.tostring(bars_in_phase), text_color=color.white, text_size=size.small)
 
-    // Estimated Remaining
     table.cell(info_table, 0, 5, "Est. Remaining:", text_color=color.white, text_size=size.small)
     table.cell(info_table, 1, 5, current_avg_duration > 0 ? str.tostring(math.round(estimated_remaining)) : "N/A", text_color=color.gray, text_size=size.small)
 
-    // VQI
     table.cell(info_table, 0, 6, "VQI:", text_color=color.white, text_size=size.small)
-    table.cell(info_table, 1, 6, str.tostring(math.round(vqi, 2)), text_color=vqi_color, text_size=size.small)
+    table.cell(info_table, 1, 6, str.tostring(math.round(vqi, 2)), text_color=color.white, text_size=size.small)
 
-    // Volume Momentum
     table.cell(info_table, 0, 7, "Vol Momentum:", text_color=color.white, text_size=size.small)
     color mom_color = volume_momentum > 20 ? color.green : (volume_momentum < -20 ? color.red : color.gray)
     table.cell(info_table, 1, 7, str.tostring(math.round(volume_momentum, 1)), text_color=mom_color, text_size=size.small)
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║                         SECTION 12: ALERT CONDITIONS                         ║
+// ║                         SECTION 13: ALERT CONDITIONS                         ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// Phase change detection
 bool phase_to_accumulation = phase_changed and current_phase == PHASE_ACCUMULATION
 bool phase_to_markup = phase_changed and current_phase == PHASE_MARKUP
 bool phase_to_distribution = phase_changed and current_phase == PHASE_DISTRIBUTION
 bool phase_to_markdown = phase_changed and current_phase == PHASE_MARKDOWN
-
-// Distribution warning (volume spike at top)
 bool distribution_warning = near_high and volume_spike and close_position < 0.5
 
-// Alert conditions
-alertcondition(enable_phase_alerts and phase_to_accumulation, title="Phase: Accumulation", message="Smart Money Phase Detector: Market entered ACCUMULATION phase")
-alertcondition(enable_phase_alerts and phase_to_markup, title="Phase: Markup", message="Smart Money Phase Detector: Market entered MARKUP phase - Potential bullish breakout!")
-alertcondition(enable_phase_alerts and phase_to_distribution, title="Phase: Distribution", message="Smart Money Phase Detector: Market entered DISTRIBUTION phase - Potential top forming")
-alertcondition(enable_phase_alerts and phase_to_markdown, title="Phase: Markdown", message="Smart Money Phase Detector: Market entered MARKDOWN phase - Bearish selling pressure!")
+alertcondition(enable_phase_alerts and phase_to_accumulation, title="Phase: Accumulation", message="SMPD: Market entered ACCUMULATION phase")
+alertcondition(enable_phase_alerts and phase_to_markup, title="Phase: Markup", message="SMPD: Market entered MARKUP phase - Bullish breakout!")
+alertcondition(enable_phase_alerts and phase_to_distribution, title="Phase: Distribution", message="SMPD: Market entered DISTRIBUTION phase - Potential top")
+alertcondition(enable_phase_alerts and phase_to_markdown, title="Phase: Markdown", message="SMPD: Market entered MARKDOWN phase - Bearish!")
 
-alertcondition(enable_transition_alerts and transition_to_markup, title="Transition: Markup Warning", message="Smart Money Phase Detector: Early warning - Potential MARKUP transition approaching")
-alertcondition(enable_transition_alerts and transition_to_markdown, title="Transition: Markdown Warning", message="Smart Money Phase Detector: Early warning - Potential MARKDOWN transition approaching")
+alertcondition(enable_transition_alerts and transition_to_markup, title="Signal: Markup", message="SMPD: MARKUP transition signal detected")
+alertcondition(enable_transition_alerts and transition_to_markdown, title="Signal: Markdown", message="SMPD: MARKDOWN transition signal detected")
 
-alertcondition(enable_divergence_alerts and volume_price_divergence, title="Volume Divergence", message="Smart Money Phase Detector: Volume-Price DIVERGENCE detected - Higher price high with lower volume")
-alertcondition(enable_distribution_warning and distribution_warning, title="Distribution Warning", message="Smart Money Phase Detector: DISTRIBUTION WARNING - Volume spike at highs with weak close")
+alertcondition(enable_divergence_alerts and volume_price_divergence, title="Volume Divergence", message="SMPD: Volume-Price DIVERGENCE detected")
+alertcondition(enable_distribution_warning and distribution_warning, title="Distribution Warning", message="SMPD: DISTRIBUTION WARNING - Volume spike at highs")
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║                    SECTION 13: LOWER PANEL (SEPARATE PANE)                   ║
+// ║                         SECTION 14: DATA WINDOW OUTPUT                       ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-// Note: For the lower panel with VQI histogram and Volume Momentum,
-// we need to create a separate indicator. However, we can plot some
-// data at the bottom of the chart for reference.
-
-// Plot VQI and Volume Momentum as small indicators at bottom
-// These would ideally be in a separate pane indicator
-
-// Export values for potential use with external indicators
-plot(vqi, "VQI", color=color.new(vqi_color, 100), display=display.data_window)
+plot(vqi, "VQI", color=color.new(color.white, 100), display=display.data_window)
 plot(volume_momentum, "Volume Momentum", color=color.new(color.blue, 100), display=display.data_window)
 plot(volume_character_score, "Volume Character Score", color=color.new(color.purple, 100), display=display.data_window)
 plot(phase_confidence, "Phase Confidence", color=color.new(color.green, 100), display=display.data_window)
-plot(float(current_phase), "Current Phase", color=color.new(color.white, 100), display=display.data_window)
+plot(float(current_phase), "Current Phase (1=MD,2=AC,3=MU,4=DI)", color=color.new(color.white, 100), display=display.data_window)
+plot(close_position, "Close Position", color=color.new(color.white, 100), display=display.data_window)
+plot(volume_ratio, "Volume Ratio", color=color.new(color.white, 100), display=display.data_window)
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║                              END OF INDICATOR                                ║

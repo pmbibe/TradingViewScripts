@@ -491,12 +491,31 @@ p_lower = plot(show_spread_bands ? lower_band : na, "Lower Spread Band", color=c
 fill(p_upper, p_lower, color=show_spread_bands ? spread_band_color : na, title="Spread Fill")
 
 // === 11C: Close Position Dots ===
-plot_size = dot_size == "Tiny" ? size.tiny : (dot_size == "Small" ? size.small : size.normal)
+// Note: plotshape size requires const string, so we use separate conditions for each size option
 
-plotshape(show_close_dots and is_strong_buying, "Strong Buying", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=plot_size)
-plotshape(show_close_dots and is_buying, "Buying", shape.circle, location.abovebar, COLOR_BUYING, size=plot_size)
-plotshape(show_close_dots and is_neutral_close, "Neutral", shape.circle, location.abovebar, COLOR_NEUTRAL, size=plot_size)
-plotshape(show_close_dots and is_strong_selling, "Selling", shape.circle, location.belowbar, COLOR_SELLING, size=plot_size)
+bool use_tiny = dot_size == "Tiny"
+bool use_small = dot_size == "Small"
+bool use_normal = dot_size == "Normal"
+
+// Strong Buying dots
+plotshape(show_close_dots and is_strong_buying and use_tiny, "Strong Buying Tiny", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=size.tiny)
+plotshape(show_close_dots and is_strong_buying and use_small, "Strong Buying Small", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=size.small)
+plotshape(show_close_dots and is_strong_buying and use_normal, "Strong Buying Normal", shape.circle, location.abovebar, COLOR_STRONG_BUYING, size=size.normal)
+
+// Buying dots
+plotshape(show_close_dots and is_buying and use_tiny, "Buying Tiny", shape.circle, location.abovebar, COLOR_BUYING, size=size.tiny)
+plotshape(show_close_dots and is_buying and use_small, "Buying Small", shape.circle, location.abovebar, COLOR_BUYING, size=size.small)
+plotshape(show_close_dots and is_buying and use_normal, "Buying Normal", shape.circle, location.abovebar, COLOR_BUYING, size=size.normal)
+
+// Neutral dots
+plotshape(show_close_dots and is_neutral_close and use_tiny, "Neutral Tiny", shape.circle, location.abovebar, COLOR_NEUTRAL, size=size.tiny)
+plotshape(show_close_dots and is_neutral_close and use_small, "Neutral Small", shape.circle, location.abovebar, COLOR_NEUTRAL, size=size.small)
+plotshape(show_close_dots and is_neutral_close and use_normal, "Neutral Normal", shape.circle, location.abovebar, COLOR_NEUTRAL, size=size.normal)
+
+// Selling dots
+plotshape(show_close_dots and is_strong_selling and use_tiny, "Selling Tiny", shape.circle, location.belowbar, COLOR_SELLING, size=size.tiny)
+plotshape(show_close_dots and is_strong_selling and use_small, "Selling Small", shape.circle, location.belowbar, COLOR_SELLING, size=size.small)
+plotshape(show_close_dots and is_strong_selling and use_normal, "Selling Normal", shape.circle, location.belowbar, COLOR_SELLING, size=size.normal)
 
 // === 11D: Transition Arrows ===
 plotshape(show_transition_arrows and transition_to_markup, "Markup Transition", shape.triangleup, location.belowbar, color.green, size=size.small, text="↑")

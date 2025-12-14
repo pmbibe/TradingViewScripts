@@ -1,0 +1,276 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// Smart Money Phase Detector - Lower Panel v1.0
+// Volume Quality Index (VQI) Histogram and Volume Momentum Oscillator
+// Author: Claude AI Assistant
+// Version: 1.0
+// NOTE: Use this indicator in conjunction with "Smart Money Phase Detector" main indicator
+
+//@version=5
+indicator("Smart Money Phase Detector - Panel", "SMPD Panel", overlay=false, format=format.price, precision=2)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                         SECTION 1: INPUT PARAMETERS                          ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// --- Volume Settings ---
+string GROUP_VOLUME = "📊 Volume Settings"
+volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=100, group=GROUP_VOLUME, tooltip="Moving average period for volume analysis")
+volume_fast_length = input.int(5, "Volume Fast MA", minval=2, maxval=20, group=GROUP_VOLUME)
+volume_smoothness_length = input.int(10, "Volume Smoothness Period", minval=5, maxval=30, group=GROUP_VOLUME)
+
+// --- VQI Settings ---
+string GROUP_VQI = "📈 VQI Settings"
+vqi_organic_threshold = input.float(1.2, "Organic Buying Threshold", minval=0.8, maxval=2.0, step=0.1, group=GROUP_VQI)
+vqi_institutional_threshold = input.float(2.0, "Institutional Spike Threshold", minval=1.5, maxval=3.0, step=0.1, group=GROUP_VQI)
+vqi_accumulation_threshold = input.float(0.7, "Accumulation Threshold", minval=0.3, maxval=1.0, step=0.1, group=GROUP_VQI)
+vqi_selling_threshold = input.float(1.5, "Selling Threshold", minval=1.0, maxval=2.5, step=0.1, group=GROUP_VQI)
+smoothness_high = input.float(0.7, "High Smoothness Level", minval=0.4, maxval=0.9, step=0.05, group=GROUP_VQI)
+smoothness_low = input.float(0.5, "Low Smoothness Level", minval=0.2, maxval=0.7, step=0.05, group=GROUP_VQI)
+
+// --- Visual Settings ---
+string GROUP_VISUAL = "🎨 Visual Settings"
+show_vqi_histogram = input.bool(true, "Show VQI Histogram", group=GROUP_VISUAL)
+show_volume_momentum = input.bool(true, "Show Volume Momentum Line", group=GROUP_VISUAL)
+show_zero_line = input.bool(true, "Show Zero Line", group=GROUP_VISUAL)
+show_overbought_oversold = input.bool(true, "Show OB/OS Levels", group=GROUP_VISUAL)
+show_volume_character = input.bool(true, "Show Volume Character Score", group=GROUP_VISUAL)
+show_legend = input.bool(true, "Show Color Legend", group=GROUP_VISUAL)
+
+// --- Asset Classification ---
+string GROUP_ASSET = "🏷️ Asset Classification"
+classification_lookback = input.int(100, "Classification Lookback", minval=50, maxval=200, group=GROUP_ASSET)
+smooth_threshold = input.float(0.6, "Smooth Volume Threshold", minval=0.3, maxval=0.9, step=0.05, group=GROUP_ASSET)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                         SECTION 2: CONSTANTS & COLORS                        ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// VQI Histogram Colors
+color COLOR_VQI_ORGANIC = color.new(#26a69a, 0)       // Green - organic buying
+color COLOR_VQI_INSTITUTIONAL = color.new(#2196f3, 0) // Blue - institutional spike
+color COLOR_VQI_ACCUMULATION = color.new(#ffeb3b, 0)  // Yellow - accumulation
+color COLOR_VQI_SELLING = color.new(#ef5350, 0)       // Red - selling
+color COLOR_VQI_NEUTRAL = color.new(#78909c, 60)      // Gray - neutral
+
+// Volume Momentum Colors
+color COLOR_MOM_BULLISH = color.new(#00e676, 0)       // Bright green
+color COLOR_MOM_BEARISH = color.new(#ff5252, 0)       // Bright red
+color COLOR_MOM_NEUTRAL = color.new(#90a4ae, 0)       // Gray blue
+
+// Reference Lines
+color COLOR_ZERO_LINE = color.new(#ffffff, 70)        // White, semi-transparent
+color COLOR_OB_LEVEL = color.new(#ff9800, 70)         // Orange
+color COLOR_OS_LEVEL = color.new(#03a9f4, 70)         // Light blue
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                      SECTION 3: VOLUME QUALITY INDEX (VQI)                   ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// Calculate volume moving averages
+float volume_ma = ta.sma(volume, volume_ma_length)
+float volume_ma_fast = ta.sma(volume, volume_fast_length)
+
+// Volume ratio: current volume relative to average
+float volume_ratio = volume_ma > 0 ? volume / volume_ma : 1.0
+
+// Volume smoothness: measures consistency (1 = smooth, 0 = erratic)
+float volume_stdev = ta.stdev(volume, volume_smoothness_length)
+float volume_avg = ta.sma(volume, volume_smoothness_length)
+float volume_smoothness = volume_avg > 0 ? math.max(0, 1 - (volume_stdev / volume_avg)) : 0.5
+
+// Calculate VQI (Volume Quality Index)
+// VQI combines volume intensity with quality/smoothness
+float vqi = volume_ratio * volume_smoothness
+
+// Smoothed VQI for better visualization
+float vqi_smoothed = ta.sma(vqi, 3)
+
+// Determine VQI color based on conditions
+// Priority: Selling > Institutional > Organic > Accumulation > Neutral
+color vqi_color = COLOR_VQI_NEUTRAL
+
+// Check for selling pressure (high VQI + bearish bar)
+bool is_selling = vqi > vqi_selling_threshold and close < open
+// Check for institutional spike (very high VQI + low smoothness = sudden spike)
+bool is_institutional = vqi > vqi_institutional_threshold and volume_smoothness < smoothness_low
+// Check for organic buying (elevated VQI + high smoothness = consistent buying)
+bool is_organic = vqi > vqi_organic_threshold and volume_smoothness > smoothness_high
+// Check for accumulation (low VQI = quiet accumulation period)
+bool is_accumulation = vqi < vqi_accumulation_threshold
+
+// Apply colors with priority
+if is_selling
+    vqi_color := COLOR_VQI_SELLING
+else if is_institutional
+    vqi_color := COLOR_VQI_INSTITUTIONAL
+else if is_organic
+    vqi_color := COLOR_VQI_ORGANIC
+else if is_accumulation
+    vqi_color := COLOR_VQI_ACCUMULATION
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                        SECTION 4: VOLUME MOMENTUM                            ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// Volume Momentum: Fast MA vs Slow MA comparison
+// Positive = volume increasing, Negative = volume decreasing
+float volume_ma_slow = ta.sma(volume, volume_ma_length)
+float raw_volume_momentum = volume_ma_slow > 0 ? 100 * (volume_ma_fast - volume_ma_slow) / volume_ma_slow : 0.0
+
+// Clamp to -100 to +100 range
+float volume_momentum = math.max(-100, math.min(100, raw_volume_momentum))
+
+// Smoothed momentum for cleaner line
+float volume_momentum_smooth = ta.ema(volume_momentum, 3)
+
+// Momentum color based on value
+color mom_color = volume_momentum_smooth > 20 ? COLOR_MOM_BULLISH :
+                  volume_momentum_smooth < -20 ? COLOR_MOM_BEARISH : COLOR_MOM_NEUTRAL
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                     SECTION 5: VOLUME CHARACTER SCORE                        ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// Calculate average smoothness over lookback period
+float avg_smoothness = ta.sma(volume_smoothness, classification_lookback)
+
+// Volume Character Score (0-100)
+// Higher = smoother, more organic volume profile
+// Lower = spikier, more erratic volume profile
+float volume_character_score = math.max(0, math.min(100, avg_smoothness * 100))
+
+// Smooth the character score
+float volume_character_smooth = ta.ema(volume_character_score, 20)
+
+// Asset classification
+bool is_smooth_volume = avg_smoothness > smooth_threshold
+string asset_type = is_smooth_volume ? "Smooth" : "Spikey"
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                          SECTION 6: VISUAL OUTPUT                            ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// === 6A: VQI Histogram ===
+// Scale VQI for better visualization (multiply by 20 to make it more visible)
+float vqi_display = vqi * 20
+
+plot(show_vqi_histogram ? vqi_display : na, "VQI Histogram", color=vqi_color, style=plot.style_histogram, linewidth=3)
+
+// === 6B: Volume Momentum Line ===
+// Overlay on same panel, scaled to fit with VQI
+plot(show_volume_momentum ? volume_momentum_smooth : na, "Volume Momentum", color=mom_color, linewidth=2)
+
+// === 6C: Reference Lines ===
+// Zero line
+hline(0, "Zero Line", color=show_zero_line ? COLOR_ZERO_LINE : color.new(color.white, 100), linestyle=hline.style_solid, linewidth=1)
+
+// Overbought/Oversold levels for momentum
+hline(50, "OB Level", color=show_overbought_oversold ? COLOR_OB_LEVEL : color.new(color.white, 100), linestyle=hline.style_dashed, linewidth=1)
+hline(-50, "OS Level", color=show_overbought_oversold ? COLOR_OS_LEVEL : color.new(color.white, 100), linestyle=hline.style_dashed, linewidth=1)
+
+// VQI threshold lines
+hline(vqi_organic_threshold * 20, "VQI Organic Level", color=color.new(COLOR_VQI_ORGANIC, 70), linestyle=hline.style_dotted)
+hline(vqi_accumulation_threshold * 20, "VQI Accum Level", color=color.new(COLOR_VQI_ACCUMULATION, 70), linestyle=hline.style_dotted)
+
+// === 6D: Volume Character Score (Background Band) ===
+// Show as a faint background gradient
+float char_upper = show_volume_character ? 100 : na
+float char_lower = show_volume_character ? -100 : na
+p_char_upper = plot(char_upper, "Char Upper", color=color.new(color.white, 100), display=display.none)
+p_char_lower = plot(char_lower, "Char Lower", color=color.new(color.white, 100), display=display.none)
+
+// Small volume character indicator in corner
+plot(show_volume_character ? volume_character_smooth - 100 : na, "Vol Character", color=color.new(color.purple, 50), style=plot.style_area, linewidth=1)
+
+// === 6E: Legend Table ===
+var table legend_table = na
+if show_legend and barstate.islast
+    legend_table := table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 80), border_width=1, border_color=color.gray)
+
+    // Header
+    table.cell(legend_table, 0, 0, "VQI Colors", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.tiny)
+    table.cell(legend_table, 1, 0, "Meaning", bgcolor=color.new(color.blue, 70), text_color=color.white, text_size=size.tiny)
+
+    // Green - Organic
+    table.cell(legend_table, 0, 1, "█", text_color=COLOR_VQI_ORGANIC, text_size=size.small)
+    table.cell(legend_table, 1, 1, "Organic Buying", text_color=color.white, text_size=size.tiny)
+
+    // Blue - Institutional
+    table.cell(legend_table, 0, 2, "█", text_color=COLOR_VQI_INSTITUTIONAL, text_size=size.small)
+    table.cell(legend_table, 1, 2, "Institutional Spike", text_color=color.white, text_size=size.tiny)
+
+    // Yellow - Accumulation
+    table.cell(legend_table, 0, 3, "█", text_color=COLOR_VQI_ACCUMULATION, text_size=size.small)
+    table.cell(legend_table, 1, 3, "Accumulation", text_color=color.white, text_size=size.tiny)
+
+    // Red - Selling
+    table.cell(legend_table, 0, 4, "█", text_color=COLOR_VQI_SELLING, text_size=size.small)
+    table.cell(legend_table, 1, 4, "Selling Pressure", text_color=color.white, text_size=size.tiny)
+
+    // Volume Type
+    table.cell(legend_table, 0, 5, "Type:", text_color=color.white, text_size=size.tiny)
+    table.cell(legend_table, 1, 5, asset_type, text_color=is_smooth_volume ? color.teal : color.purple, text_size=size.tiny)
+
+// === 6F: Additional Info Display ===
+var table info_panel = na
+if barstate.islast
+    info_panel := table.new(position.bottom_right, 2, 4, bgcolor=color.new(color.black, 85), border_width=1, border_color=color.gray)
+
+    // VQI Value
+    table.cell(info_panel, 0, 0, "VQI:", text_color=color.white, text_size=size.tiny)
+    table.cell(info_panel, 1, 0, str.tostring(math.round(vqi, 2)), text_color=vqi_color, text_size=size.tiny)
+
+    // Volume Momentum
+    table.cell(info_panel, 0, 1, "Momentum:", text_color=color.white, text_size=size.tiny)
+    table.cell(info_panel, 1, 1, str.tostring(math.round(volume_momentum, 1)), text_color=mom_color, text_size=size.tiny)
+
+    // Smoothness
+    table.cell(info_panel, 0, 2, "Smoothness:", text_color=color.white, text_size=size.tiny)
+    table.cell(info_panel, 1, 2, str.tostring(math.round(volume_smoothness * 100, 1)) + "%", text_color=color.white, text_size=size.tiny)
+
+    // Character Score
+    table.cell(info_panel, 0, 3, "Character:", text_color=color.white, text_size=size.tiny)
+    table.cell(info_panel, 1, 3, str.tostring(math.round(volume_character_score, 0)), text_color=color.purple, text_size=size.tiny)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                        SECTION 7: DATA WINDOW OUTPUT                         ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// Export all values to data window for analysis
+plot(vqi, "VQI (Raw)", color=color.new(color.white, 100), display=display.data_window)
+plot(volume_ratio, "Volume Ratio", color=color.new(color.white, 100), display=display.data_window)
+plot(volume_smoothness * 100, "Smoothness %", color=color.new(color.white, 100), display=display.data_window)
+plot(volume_momentum, "Vol Momentum (Raw)", color=color.new(color.white, 100), display=display.data_window)
+plot(volume_character_score, "Character Score", color=color.new(color.white, 100), display=display.data_window)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                          SECTION 8: ALERT CONDITIONS                         ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// VQI Alerts
+bool vqi_organic_alert = is_organic and not is_organic[1]
+bool vqi_institutional_alert = is_institutional and not is_institutional[1]
+bool vqi_selling_alert = is_selling and not is_selling[1]
+bool vqi_accumulation_alert = is_accumulation and not is_accumulation[1]
+
+// Momentum Alerts
+bool momentum_bullish_cross = ta.crossover(volume_momentum_smooth, 20)
+bool momentum_bearish_cross = ta.crossunder(volume_momentum_smooth, -20)
+bool momentum_extreme_bullish = volume_momentum_smooth > 70
+bool momentum_extreme_bearish = volume_momentum_smooth < -70
+
+// Alert conditions
+alertcondition(vqi_organic_alert, title="VQI: Organic Buying", message="SMPD Panel: Organic buying pattern detected")
+alertcondition(vqi_institutional_alert, title="VQI: Institutional Spike", message="SMPD Panel: Institutional volume spike detected")
+alertcondition(vqi_selling_alert, title="VQI: Selling Pressure", message="SMPD Panel: Selling pressure detected")
+alertcondition(vqi_accumulation_alert, title="VQI: Accumulation", message="SMPD Panel: Low volume accumulation pattern")
+
+alertcondition(momentum_bullish_cross, title="Momentum: Bullish Cross", message="SMPD Panel: Volume momentum crossed above +20")
+alertcondition(momentum_bearish_cross, title="Momentum: Bearish Cross", message="SMPD Panel: Volume momentum crossed below -20")
+alertcondition(momentum_extreme_bullish, title="Momentum: Extreme Bullish", message="SMPD Panel: Volume momentum extremely high (>70)")
+alertcondition(momentum_extreme_bearish, title="Momentum: Extreme Bearish", message="SMPD Panel: Volume momentum extremely low (<-70)")
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                              END OF INDICATOR                                ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝

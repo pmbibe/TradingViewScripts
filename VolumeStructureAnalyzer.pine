@@ -499,8 +499,8 @@ plot(show_volume_hist ? vol_slow_ma : na, title="Slow Vol MA",
      color=color.orange, linewidth=1)
 
 // Threshold line
-hline(show_volume_hist ? vol_sma * volume_climax_threshold : na,
-      title="Climax Threshold", color=color.gray, linestyle=hline.style_dashed)
+plot(show_volume_hist ? vol_sma * volume_climax_threshold : na,
+     title="Climax Threshold", color=color.gray, linewidth=1, style=plot.style_linebr)
 
 // Volume trend background
 vol_bg_color = volume_trend_bullish ? color.new(color.green, 95) : color.new(color.red, 95)

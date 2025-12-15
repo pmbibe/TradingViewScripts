@@ -756,7 +756,9 @@ calculateBearishDivergenceScore() =>
             volumeScore += 5
 
         volumeMA5_current = ta.sma(volume, 5)
-        volumeMA5_previous = ta.sma(volume, 5)[barDistance]
+        // Safe lookback - limit to prevent buffer overflow
+        safeBarDistance = math.min(barDistance, 80)
+        volumeMA5_previous = barDistance > 0 and barDistance <= 80 ? ta.sma(volume, 5)[safeBarDistance] : volumeMA5_current
         volumeTrendDown = volumeMA5_current < volumeMA5_previous
 
         if volumeTrendDown
@@ -810,15 +812,18 @@ calculateBearishDivergenceScore() =>
         if atResistance
             contextScore += 5
 
+        // Safe lookback for historical values
+        safeLookback = math.min(bar_index - lastBar, 80)
+
         rsi = ta.rsi(close, 14)
-        rsiAtPivot = rsi[bar_index - lastBar]
+        rsiAtPivot = safeLookback >= 0 and safeLookback <= 80 ? rsi[safeLookback] : rsi
 
         if rsiAtPivot > 70
             contextScore += 5
         else if rsiAtPivot > 60
             contextScore += 3
 
-        ema20AtPivot = ema20[bar_index - lastBar]
+        ema20AtPivot = safeLookback >= 0 and safeLookback <= 80 ? ema20[safeLookback] : ema20
         extensionPercent = ema20AtPivot > 0 ? ((lastPrice - ema20AtPivot) / ema20AtPivot * 100) : 0.0
 
         if extensionPercent > 10.0
@@ -886,7 +891,9 @@ calculateBullishDivergenceScore() =>
             volumeScore += 5
 
         volumeMA5_current = ta.sma(volume, 5)
-        volumeMA5_previous = ta.sma(volume, 5)[barDistance]
+        // Safe lookback - limit to prevent buffer overflow
+        safeBarDistance = math.min(barDistance, 80)
+        volumeMA5_previous = barDistance > 0 and barDistance <= 80 ? ta.sma(volume, 5)[safeBarDistance] : volumeMA5_current
         volumeTrendDown = volumeMA5_current < volumeMA5_previous
 
         if volumeTrendDown
@@ -940,15 +947,18 @@ calculateBullishDivergenceScore() =>
         if atSupport
             contextScore += 5
 
+        // Safe lookback for historical values
+        safeLookback = math.min(bar_index - lastBar, 80)
+
         rsi = ta.rsi(close, 14)
-        rsiAtPivot = rsi[bar_index - lastBar]
+        rsiAtPivot = safeLookback >= 0 and safeLookback <= 80 ? rsi[safeLookback] : rsi
 
         if rsiAtPivot < 30
             contextScore += 5
         else if rsiAtPivot < 40
             contextScore += 3
 
-        ema20AtPivot = ema20[bar_index - lastBar]
+        ema20AtPivot = safeLookback >= 0 and safeLookback <= 80 ? ema20[safeLookback] : ema20
         extensionPercent = ema20AtPivot > 0 ? ((ema20AtPivot - lastPrice) / ema20AtPivot * 100) : 0.0
 
         if extensionPercent > 10.0

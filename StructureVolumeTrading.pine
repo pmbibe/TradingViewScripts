@@ -1418,14 +1418,14 @@ alertcondition(longSignal, "Long Entry", "BUY Signal - Confirmed Breakout!")
 alertcondition(shortSignal, "Short Entry", "SELL Signal - Confirmed Breakdown!")
 
 // Progressive Divergence Alerts (v3.0)
-alertcondition(earlyBearishDiv, "Early Bearish Div", "⚠ Early Bearish Divergence - Score: " + str.tostring(math.round(bearishDivScore)) + "%")
-alertcondition(earlyBullishDiv, "Early Bullish Div", "⚠ Early Bullish Divergence - Score: " + str.tostring(math.round(bullishDivScore)) + "%")
+alertcondition(earlyBearishDiv, "Early Bearish Div", "⚠ Early Bearish Divergence Detected - Check chart for confidence score")
+alertcondition(earlyBullishDiv, "Early Bullish Div", "⚠ Early Bullish Divergence Detected - Check chart for confidence score")
 
-alertcondition(probableBearishDiv, "Probable Bearish Div", "⚡ Probable Bearish Divergence - Score: " + str.tostring(math.round(bearishDivScore)) + "%")
-alertcondition(probableBullishDiv, "Probable Bullish Div", "⚡ Probable Bullish Divergence - Score: " + str.tostring(math.round(bullishDivScore)) + "%")
+alertcondition(probableBearishDiv, "Probable Bearish Div", "⚡ Probable Bearish Divergence - High probability signal detected")
+alertcondition(probableBullishDiv, "Probable Bullish Div", "⚡ Probable Bullish Divergence - High probability signal detected")
 
-alertcondition(confirmedBearishDiv, "Confirmed Bearish Div", "✓ CONFIRMED Bearish Divergence - Score: " + str.tostring(math.round(bearishDivScore)) + "% - HIGH CONFIDENCE!")
-alertcondition(confirmedBullishDiv, "Confirmed Bullish Div", "✓ CONFIRMED Bullish Divergence - Score: " + str.tostring(math.round(bullishDivScore)) + "% - HIGH CONFIDENCE!")
+alertcondition(confirmedBearishDiv, "Confirmed Bearish Div", "✓ CONFIRMED Bearish Divergence - HIGH CONFIDENCE SIGNAL!")
+alertcondition(confirmedBullishDiv, "Confirmed Bullish Div", "✓ CONFIRMED Bullish Divergence - HIGH CONFIDENCE SIGNAL!")
 
 alertcondition(isDrawingAccum and not isDrawingAccum[1], "Accumulation Start", "Accumulation Zone Detected!")
 

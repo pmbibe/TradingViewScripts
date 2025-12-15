@@ -422,20 +422,7 @@ if show_accumulation
             box.delete(accum_box)
 
         // Create new box with current data
-        accum_box := box.new(
-            left=accum_start_bar,
-            top=accum_high,
-            right=bar_index + 1,  // Extend to next bar
-            bottom=accum_low,
-            border_color=color.new(color.green, 0),
-            bgcolor=color.new(color.green, 90),
-            border_width=2,
-            text="ACCUMULATION\nScore: " + str.tostring(accum_score) + "\nBars: " + str.tostring(consolidation_count),
-            text_color=color.green,
-            text_size=size.small,
-            text_halign=text.align_left,
-            text_valign=text.align_top
-        )
+        accum_box := box.new(accum_start_bar, accum_high, bar_index + 1, accum_low, border_color=color.new(color.green, 0), bgcolor=color.new(color.green, 90), border_width=2, text="ACCUMULATION\nScore: " + str.tostring(accum_score) + "\nBars: " + str.tostring(consolidation_count), text_color=color.green, text_size=size.small, text_halign=text.align_left, text_valign=text.align_top)
     else if not in_accumulation
         accum_box := na
 
@@ -449,20 +436,7 @@ if show_distribution
             box.delete(dist_box)
 
         // Create new box with current data
-        dist_box := box.new(
-            left=dist_start_bar,
-            top=dist_high,
-            right=bar_index + 1,
-            bottom=dist_low,
-            border_color=color.new(color.red, 0),
-            bgcolor=color.new(color.red, 90),
-            border_width=2,
-            text="DISTRIBUTION\nScore: " + str.tostring(dist_score) + "\nBars: " + str.tostring(topping_count),
-            text_color=color.red,
-            text_size=size.small,
-            text_halign=text.align_left,
-            text_valign=text.align_top
-        )
+        dist_box := box.new(dist_start_bar, dist_high, bar_index + 1, dist_low, border_color=color.new(color.red, 0), bgcolor=color.new(color.red, 90), border_width=2, text="DISTRIBUTION\nScore: " + str.tostring(dist_score) + "\nBars: " + str.tostring(topping_count), text_color=color.red, text_size=size.small, text_halign=text.align_left, text_valign=text.align_top)
     else if not in_distribution
         dist_box := na
 
@@ -501,60 +475,40 @@ var line breakout_line = na
 var line breakdown_line = na
 
 if confirmed_bull_breakout and not na(accum_high)
-    breakout_line := line.new(bar_index, accum_high, bar_index + 10, accum_high,
-                              color=color.green, width=2, style=line.style_dashed)
+    breakout_line := line.new(bar_index, accum_high, bar_index + 10, accum_high, color=color.green, width=2, style=line.style_dashed)
 
 if confirmed_bear_breakdown and not na(dist_low)
-    breakdown_line := line.new(bar_index, dist_low, bar_index + 10, dist_low,
-                               color=color.red, width=2, style=line.style_dashed)
+    breakdown_line := line.new(bar_index, dist_low, bar_index + 10, dist_low, color=color.red, width=2, style=line.style_dashed)
 
 // Signal Labels
 if strong_buy
-    label.new(bar_index, low, "STRONG BUY\n" + str.tostring(buy_score),
-              style=label.style_label_up, color=color.new(color.green, 20),
-              textcolor=color.white, size=size.normal)
+    label.new(bar_index, low, "STRONG BUY\n" + str.tostring(buy_score), style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white, size=size.normal)
 
 if buy_signal
-    label.new(bar_index, low, "BUY\n" + str.tostring(buy_score),
-              style=label.style_label_up, color=color.new(color.green, 40),
-              textcolor=color.white, size=size.small)
+    label.new(bar_index, low, "BUY\n" + str.tostring(buy_score), style=label.style_label_up, color=color.new(color.green, 40), textcolor=color.white, size=size.small)
 
 if strong_sell
-    label.new(bar_index, high, "STRONG SELL\n" + str.tostring(sell_score),
-              style=label.style_label_down, color=color.new(color.red, 20),
-              textcolor=color.white, size=size.normal)
+    label.new(bar_index, high, "STRONG SELL\n" + str.tostring(sell_score), style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.normal)
 
 if sell_signal
-    label.new(bar_index, high, "SELL\n" + str.tostring(sell_score),
-              style=label.style_label_down, color=color.new(color.red, 40),
-              textcolor=color.white, size=size.small)
+    label.new(bar_index, high, "SELL\n" + str.tostring(sell_score), style=label.style_label_down, color=color.new(color.red, 40), textcolor=color.white, size=size.small)
 
 // Divergence Labels
 if show_divergence and bearish_divergence
-    label.new(bar_index - lookback_period, high[lookback_period], "BEAR DIV",
-              style=label.style_label_down, color=color.orange,
-              textcolor=color.white, size=size.small)
+    label.new(bar_index - lookback_period, high[lookback_period], "BEAR DIV", style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.small)
 
 if show_divergence and bullish_divergence
-    label.new(bar_index - lookback_period, low[lookback_period], "BULL DIV",
-              style=label.style_label_up, color=color.blue,
-              textcolor=color.white, size=size.small)
+    label.new(bar_index - lookback_period, low[lookback_period], "BULL DIV", style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.small)
 
 // Warning Labels
 if show_warnings and weak_breakout
-    label.new(bar_index, high * 1.002, "⚠ WEAK",
-              style=label.style_label_down, color=color.new(color.yellow, 20),
-              textcolor=color.black, size=size.tiny)
+    label.new(bar_index, high * 1.002, "⚠ WEAK", style=label.style_label_down, color=color.new(color.yellow, 20), textcolor=color.black, size=size.tiny)
 
 if show_warnings and exhaustion
-    label.new(bar_index, high * 1.004, "⚠ EXHAUSTION",
-              style=label.style_label_down, color=color.new(color.orange, 20),
-              textcolor=color.white, size=size.tiny)
+    label.new(bar_index, high * 1.004, "⚠ EXHAUSTION", style=label.style_label_down, color=color.new(color.orange, 20), textcolor=color.white, size=size.tiny)
 
 if show_warnings and consolidation
-    label.new(bar_index, high * 1.001, "⚠ CONSOLIDATION",
-              style=label.style_label_down, color=color.new(color.gray, 40),
-              textcolor=color.white, size=size.tiny)
+    label.new(bar_index, high * 1.001, "⚠ CONSOLIDATION", style=label.style_label_down, color=color.new(color.gray, 40), textcolor=color.white, size=size.tiny)
 
 // Signal tracking dots
 plot(strong_buy or buy_signal ? low * 0.999 : na, title="Buy Dots",

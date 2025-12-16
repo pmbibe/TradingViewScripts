@@ -1,0 +1,317 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Volume Structure Zones - Simplified Version
+
+//@version=5
+indicator("Volume Structure Zones", shorttitle="VSZ", overlay=true, max_boxes_count=20, max_lines_count=20, max_labels_count=50)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESCRIPTION
+// ═══════════════════════════════════════════════════════════════════════════════
+// Simplified indicator focusing on 3 core features:
+// 1. Accumulation Zone Detection (green boxes during consolidation)
+// 2. Distribution Zone Detection (red boxes at tops)
+// 3. Breakout/Breakdown Confirmation (triangles + lines)
+//
+// Based on Wyckoff methodology and Volume Price Analysis.
+// Clean, simple, focused - no unnecessary complexity.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// USER INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Volume Settings
+volume_period = input.int(20, "Volume MA Period", minval=10, maxval=50, group="Volume Settings")
+volume_surge_multiplier = input.float(1.5, "Breakout Volume Multiplier", minval=1.2, maxval=2.5, step=0.1, group="Volume Settings")
+
+// Accumulation Settings
+accum_range_pct = input.float(15.0, "Accumulation Range %", minval=5.0, maxval=30.0, step=1.0, group="Accumulation Settings")
+accum_min_bars = input.int(10, "Accumulation Min Bars", minval=5, maxval=20, group="Accumulation Settings")
+
+// Distribution Settings
+dist_min_bars = input.int(5, "Distribution Min Bars", minval=3, maxval=10, group="Distribution Settings")
+dist_near_high_pct = input.float(95.0, "Near High %", minval=90.0, maxval=99.0, step=1.0, group="Distribution Settings")
+upper_wick_threshold = input.float(40.0, "Upper Wick Rejection %", minval=30.0, maxval=60.0, step=5.0, group="Distribution Settings")
+
+// Breakout Settings
+breakout_buffer_pct = input.float(0.5, "Breakout Buffer %", minval=0.0, maxval=2.0, step=0.1, group="Breakout Settings")
+strong_body_pct = input.float(60.0, "Strong Body %", minval=50.0, maxval=80.0, step=5.0, group="Breakout Settings")
+
+// Display Options
+show_accumulation = input.bool(true, "Show Accumulation Zones", group="Display")
+show_distribution = input.bool(true, "Show Distribution Zones", group="Display")
+show_volume_histogram = input.bool(false, "Show Volume Histogram", group="Display")
+show_breakout_lines = input.bool(true, "Show Breakout Lines", group="Display")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BASIC CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Volume Calculations
+vol_ma = ta.sma(volume, volume_period)
+vol_ratio = vol_ma > 0 ? volume / vol_ma : 0
+volume_surge = volume > vol_ma * volume_surge_multiplier
+
+// Price Calculations
+ema50 = ta.ema(close, 50)
+high_20 = ta.highest(high, 20)
+low_20 = ta.lowest(low, 20)
+high_50 = ta.highest(high, 50)
+
+// Price range percentage (for consolidation detection)
+range_pct = (high_20 - low_20) / close * 100
+
+// Upper wick percentage (for rejection detection)
+upper_wick_pct = (high - math.max(open, close)) / (high - low + 0.000001) * 100
+
+// Candle body percentage
+body_pct = math.abs(close - open) / (high - low + 0.000001) * 100
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ACCUMULATION ZONE DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// State variables
+var bool in_accumulation = false
+var int accum_start_bar = na
+var float accum_high = na
+var float accum_low = na
+var int accum_bar_count = 0
+
+// STEP 1: Detect sideways range
+is_sideways = range_pct < accum_range_pct
+
+// STEP 2: Count consecutive sideways bars
+if is_sideways
+    if accum_bar_count == 0
+        accum_start_bar := bar_index
+        accum_high := high_20
+        accum_low := low_20
+    accum_bar_count += 1
+    // Update zone boundaries
+    accum_high := math.max(accum_high, high)
+    accum_low := math.min(accum_low, low)
+else
+    // Reset if range breaks (but allow 1-2 wider bars)
+    if accum_bar_count > 0
+        accum_bar_count := math.max(0, accum_bar_count - 2)
+
+// STEP 3: Check volume is low
+volume_low = volume < vol_ma * 0.9
+
+// STEP 4: Enter accumulation state when criteria met
+if accum_bar_count >= accum_min_bars and not in_accumulation and volume_low
+    in_accumulation := true
+
+// STEP 5: Spring test detection (optional, for information only)
+spring_test = in_accumulation and low < accum_low and vol_ratio > 2.0 and close > accum_low
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DISTRIBUTION ZONE DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// State variables
+var bool in_distribution = false
+var int dist_start_bar = na
+var float dist_high = na
+var float dist_low = na
+var int dist_bar_count = 0
+
+// STEP 1: Confirm uptrend context
+in_uptrend = close > ema50 and ema50 > ema50[5]
+
+// Price must have rallied significantly
+price_gain = (close - close[50]) / close[50] * 100
+strong_rally = price_gain > 30.0  // 30% gain in last 50 bars
+
+// STEP 2: Detect topping pattern
+near_high = high >= high_50 * (dist_near_high_pct / 100.0)
+failed_breakout = high < high_50 * 1.02 and near_high
+has_rejection = upper_wick_pct > upper_wick_threshold
+
+// STEP 3: Confirm volume declining at high
+volume_declining_at_high = volume < vol_ma * 0.8 and near_high
+
+// STEP 4: Check if this bar shows topping characteristics
+is_topping_bar = in_uptrend and strong_rally and near_high and (volume_declining_at_high or has_rejection or failed_breakout)
+
+if is_topping_bar
+    if dist_bar_count == 0
+        dist_start_bar := bar_index
+        dist_high := high
+        dist_low := low
+    dist_bar_count += 1
+    // Update zone boundaries
+    dist_high := math.max(dist_high, high)
+    dist_low := math.min(dist_low, low)
+else
+    // Slowly decay count if not topping
+    if dist_bar_count > 0 and not in_distribution
+        dist_bar_count := math.max(0, dist_bar_count - 1)
+
+// STEP 5: Enter distribution state
+if dist_bar_count >= dist_min_bars and not in_distribution
+    in_distribution := true
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BREAKOUT CONFIRMATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Initialize breakout states (reset each bar)
+var bool bullish_breakout_triggered = false
+var bool bearish_breakdown_triggered = false
+bullish_breakout_triggered := false
+bearish_breakdown_triggered := false
+
+// BULLISH BREAKOUT from Accumulation
+if in_accumulation and not na(accum_high)
+    // CONDITION 1: Price breaks above zone with buffer
+    price_breakout = close > accum_high * (1 + breakout_buffer_pct / 100.0)
+
+    // CONDITION 2: Green candle with strong body
+    green_candle = close > open
+    strong_candle = body_pct > strong_body_pct
+
+    // CONDITION 3: Volume surge
+    vol_confirmed = volume_surge
+
+    // ALL conditions must be TRUE
+    if price_breakout and green_candle and strong_candle and vol_confirmed
+        bullish_breakout_triggered := true
+        in_accumulation := false  // Exit accumulation state
+        accum_bar_count := 0      // Reset counter
+
+// BEARISH BREAKDOWN from Distribution
+if in_distribution and not na(dist_low)
+    // CONDITION 1: Price breaks below zone with buffer
+    price_breakdown = close < dist_low * (1 - breakout_buffer_pct / 100.0)
+
+    // CONDITION 2: Red candle with strong body
+    red_candle = close < open
+    strong_candle = body_pct > strong_body_pct
+
+    // CONDITION 3: Volume surge
+    vol_confirmed = volume_surge
+
+    // ALL conditions must be TRUE
+    if price_breakdown and red_candle and strong_candle and vol_confirmed
+        bearish_breakdown_triggered := true
+        in_distribution := false  // Exit distribution state
+        dist_bar_count := 0       // Reset counter
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION - ACCUMULATION BOX
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var box accum_box = na
+
+if show_accumulation
+    // Draw box only when in accumulation
+    if in_accumulation and not na(accum_start_bar)
+        // Delete old box to prevent duplicates
+        if not na(accum_box)
+            box.delete(accum_box)
+
+        // Create new box extending to current bar
+        accum_box := box.new(accum_start_bar, accum_high, bar_index, accum_low, border_color=color.new(color.green, 0), bgcolor=color.new(color.green, 90), border_width=2, text="ACCUMULATION\nBars: " + str.tostring(accum_bar_count), text_color=color.green, text_size=size.normal, text_halign=text.align_left, text_valign=text.align_top)
+    else
+        // Clear box when exiting accumulation
+        if not na(accum_box)
+            box.delete(accum_box)
+        accum_box := na
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION - DISTRIBUTION BOX
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var box dist_box = na
+
+if show_distribution
+    // Draw box only when in distribution
+    if in_distribution and not na(dist_start_bar)
+        // Delete old box to prevent duplicates
+        if not na(dist_box)
+            box.delete(dist_box)
+
+        // Create new box extending to current bar
+        dist_box := box.new(dist_start_bar, dist_high, bar_index, dist_low, border_color=color.new(color.red, 0), bgcolor=color.new(color.red, 90), border_width=2, text="DISTRIBUTION\nBars: " + str.tostring(dist_bar_count), text_color=color.red, text_size=size.normal, text_halign=text.align_left, text_valign=text.align_top)
+    else
+        // Clear box when exiting distribution
+        if not na(dist_box)
+            box.delete(dist_box)
+        dist_box := na
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION - BREAKOUT SIGNALS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Bullish Breakout Triangle
+plotshape(bullish_breakout_triggered, title="Bullish Breakout", location=location.belowbar, color=color.new(color.green, 0), style=shape.triangleup, size=size.normal, text="BREAKOUT")
+
+// Bearish Breakdown Triangle
+plotshape(bearish_breakdown_triggered, title="Bearish Breakdown", location=location.abovebar, color=color.new(color.red, 0), style=shape.triangledown, size=size.normal, text="BREAKDOWN")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION - BREAKOUT LINES (S/R Flip)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if show_breakout_lines
+    // Draw horizontal line at breakout level
+    if bullish_breakout_triggered and not na(accum_high)
+        line.new(bar_index, accum_high, bar_index + 10, accum_high, color=color.green, width=2, style=line.style_dashed)
+
+    // Draw horizontal line at breakdown level
+    if bearish_breakdown_triggered and not na(dist_low)
+        line.new(bar_index, dist_low, bar_index + 10, dist_low, color=color.red, width=2, style=line.style_dashed)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION - VOLUME HISTOGRAM (Optional)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Volume coloring logic
+vol_color = color.gray
+
+if show_volume_histogram
+    // High volume scenarios
+    if volume > vol_ma
+        if close > open
+            vol_color := color.new(color.green, 20)  // Vol up + Price up
+        else
+            vol_color := color.new(color.lime, 50)   // Vol up + Price down (potential bottom)
+    else
+        // Low volume scenarios
+        if close < open
+            vol_color := color.new(color.red, 20)    // Vol down + Price down
+        else
+            vol_color := color.new(color.orange, 50) // Vol down + Price up (potential top)
+
+    // Highlight volume surge
+    if volume_surge
+        if close > open
+            vol_color := color.new(color.lime, 0)    // Strong buying
+        else
+            vol_color := color.new(color.red, 0)     // Strong selling
+
+// Plot volume histogram
+plot(show_volume_histogram ? volume : na, title="Volume", color=vol_color, style=plot.style_histogram, linewidth=1)
+
+// Plot volume MA
+plot(show_volume_histogram ? vol_ma : na, title="Volume MA", color=color.new(color.orange, 0), linewidth=2)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEBUGGING TOOLS (Show in Data Window)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Debug values (visible in Data Window, not on chart)
+plot(range_pct, "Range %", display=display.data_window)
+plot(accum_bar_count, "Accum Bar Count", display=display.data_window)
+plot(dist_bar_count, "Dist Bar Count", display=display.data_window)
+plot(in_accumulation ? 1 : 0, "In Accumulation", display=display.data_window)
+plot(in_distribution ? 1 : 0, "In Distribution", display=display.data_window)
+plot(vol_ratio, "Volume Ratio", display=display.data_window)
+plot(upper_wick_pct, "Upper Wick %", display=display.data_window)
+plot(body_pct, "Body %", display=display.data_window)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// END OF INDICATOR
+// ═══════════════════════════════════════════════════════════════════════════════

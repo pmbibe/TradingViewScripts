@@ -73,7 +73,7 @@ body_pct = math.abs(close - open) / (high - low + 0.000001) * 100
 
 // State variables
 var bool in_accumulation = false
-var int accum_start_bar = na
+var int accum_start_time = na  // Changed from bar_index to time
 var float accum_high = na
 var float accum_low = na
 var int accum_bar_count = 0
@@ -84,7 +84,7 @@ is_sideways = range_pct < accum_range_pct
 // STEP 2: Count consecutive sideways bars
 if is_sideways
     if accum_bar_count == 0
-        accum_start_bar := bar_index
+        accum_start_time := time  // Store time instead of bar_index
         accum_high := high_20
         accum_low := low_20
     accum_bar_count += 1
@@ -112,7 +112,7 @@ spring_test = in_accumulation and low < accum_low and vol_ratio > 2.0 and close 
 
 // State variables
 var bool in_distribution = false
-var int dist_start_bar = na
+var int dist_start_time = na  // Changed from bar_index to time
 var float dist_high = na
 var float dist_low = na
 var int dist_bar_count = 0
@@ -137,7 +137,7 @@ is_topping_bar = in_uptrend and strong_rally and near_high and (volume_declining
 
 if is_topping_bar
     if dist_bar_count == 0
-        dist_start_bar := bar_index
+        dist_start_time := time  // Store time instead of bar_index
         dist_high := high
         dist_low := low
     dist_bar_count += 1
@@ -207,13 +207,13 @@ var box accum_box = na
 
 if show_accumulation
     // Draw box only when in accumulation
-    if in_accumulation and not na(accum_start_bar)
+    if in_accumulation and not na(accum_start_time)
         // Delete old box to prevent duplicates
         if not na(accum_box)
             box.delete(accum_box)
 
-        // Create new box extending to current bar
-        accum_box := box.new(accum_start_bar, accum_high, bar_index, accum_low, border_color=color.new(color.green, 0), bgcolor=color.new(color.green, 90), border_width=2, text="ACCUMULATION\nBars: " + str.tostring(accum_bar_count), text_color=color.green, text_size=size.normal, text_halign=text.align_left, text_valign=text.align_top)
+        // Create new box extending to current bar (using time coordinates)
+        accum_box := box.new(accum_start_time, accum_high, time, accum_low, xloc=xloc.bar_time, border_color=color.new(color.green, 0), bgcolor=color.new(color.green, 90), border_width=2, text="ACCUMULATION\nBars: " + str.tostring(accum_bar_count), text_color=color.green, text_size=size.normal, text_halign=text.align_left, text_valign=text.align_top)
     else
         // Clear box when exiting accumulation
         if not na(accum_box)
@@ -228,13 +228,13 @@ var box dist_box = na
 
 if show_distribution
     // Draw box only when in distribution
-    if in_distribution and not na(dist_start_bar)
+    if in_distribution and not na(dist_start_time)
         // Delete old box to prevent duplicates
         if not na(dist_box)
             box.delete(dist_box)
 
-        // Create new box extending to current bar
-        dist_box := box.new(dist_start_bar, dist_high, bar_index, dist_low, border_color=color.new(color.red, 0), bgcolor=color.new(color.red, 90), border_width=2, text="DISTRIBUTION\nBars: " + str.tostring(dist_bar_count), text_color=color.red, text_size=size.normal, text_halign=text.align_left, text_valign=text.align_top)
+        // Create new box extending to current bar (using time coordinates)
+        dist_box := box.new(dist_start_time, dist_high, time, dist_low, xloc=xloc.bar_time, border_color=color.new(color.red, 0), bgcolor=color.new(color.red, 90), border_width=2, text="DISTRIBUTION\nBars: " + str.tostring(dist_bar_count), text_color=color.red, text_size=size.normal, text_halign=text.align_left, text_valign=text.align_top)
     else
         // Clear box when exiting distribution
         if not na(dist_box)

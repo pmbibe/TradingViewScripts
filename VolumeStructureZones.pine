@@ -1,5 +1,5 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// © Volume Structure Zones - Simplified Version
+// © Volume Structure Zones - Simplified Version v1.1
 
 //@version=5
 indicator("Volume Structure Zones", shorttitle="VSZ", overlay=true, max_boxes_count=20, max_lines_count=20, max_labels_count=50)
@@ -11,6 +11,12 @@ indicator("Volume Structure Zones", shorttitle="VSZ", overlay=true, max_boxes_co
 // 1. Accumulation Zone Detection (green boxes during consolidation)
 // 2. Distribution Zone Detection (red boxes at tops)
 // 3. Breakout/Breakdown Confirmation (triangles + lines)
+//
+// VERSION 1.1 IMPROVEMENTS:
+// - Added smart zone exit conditions to prevent overly wide zones
+// - Zones auto-close after max bars (100 for accumulation, 80 for distribution)
+// - Zones exit if price moves >20% away from zone boundaries
+// - Zones exit if range expands beyond 30% of price
 //
 // Based on Wyckoff methodology and Volume Price Analysis.
 // Clean, simple, focused - no unnecessary complexity.
@@ -106,6 +112,26 @@ if accum_bar_count >= accum_min_bars and not in_accumulation and volume_low
 // STEP 5: Spring test detection (optional, for information only)
 spring_test = in_accumulation and low < accum_low and vol_ratio > 2.0 and close > accum_low
 
+// STEP 6: Exit accumulation if conditions no longer valid
+if in_accumulation
+    // Calculate current zone range
+    zone_range_pct = (accum_high - accum_low) / close * 100
+
+    // Exit condition 1: Price moved too far from zone (invalidated)
+    price_above_zone = close > accum_high * 1.20  // 20% above zone
+    price_below_zone = close < accum_low * 0.80   // 20% below zone
+
+    // Exit condition 2: Zone has lasted too long (max 100 bars in accumulation)
+    max_bars_exceeded = accum_bar_count > 100
+
+    // Exit condition 3: Zone expanded too much (range > 30%)
+    zone_too_wide = zone_range_pct > 30.0
+
+    // Exit accumulation if any condition met
+    if price_above_zone or price_below_zone or max_bars_exceeded or zone_too_wide
+        in_accumulation := false
+        accum_bar_count := 0
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DISTRIBUTION ZONE DETECTION
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -152,6 +178,26 @@ else
 // STEP 5: Enter distribution state
 if dist_bar_count >= dist_min_bars and not in_distribution
     in_distribution := true
+
+// STEP 6: Exit distribution if conditions no longer valid
+if in_distribution
+    // Calculate current zone range
+    dist_zone_range_pct = (dist_high - dist_low) / close * 100
+
+    // Exit condition 1: Price moved too far from zone (invalidated)
+    price_above_dist_zone = close > dist_high * 1.20  // 20% above zone
+    price_below_dist_zone = close < dist_low * 0.80   // 20% below zone
+
+    // Exit condition 2: Zone has lasted too long (max 80 bars in distribution)
+    dist_max_bars_exceeded = dist_bar_count > 80
+
+    // Exit condition 3: Zone expanded too much (range > 30%)
+    dist_zone_too_wide = dist_zone_range_pct > 30.0
+
+    // Exit distribution if any condition met
+    if price_above_dist_zone or price_below_dist_zone or dist_max_bars_exceeded or dist_zone_too_wide
+        in_distribution := false
+        dist_bar_count := 0
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // BREAKOUT CONFIRMATION

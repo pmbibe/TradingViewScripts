@@ -44,8 +44,9 @@ selling_volume = is_red_candle ? volume : 0
 // ============================================================================
 
 // Calculate total buying/selling volume in lookback period
-total_buying_volume = ta.sum(buying_volume, lookback_period)
-total_selling_volume = ta.sum(selling_volume, lookback_period)
+// Using SMA * length to calculate sum (Pine Script v5 compatible)
+total_buying_volume = ta.sma(buying_volume, lookback_period) * lookback_period
+total_selling_volume = ta.sma(selling_volume, lookback_period) * lookback_period
 
 // Volume pressure ratio
 volume_pressure_ratio = total_selling_volume / total_buying_volume

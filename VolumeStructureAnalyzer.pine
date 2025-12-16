@@ -1,5 +1,5 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// © Volume Structure Analyzer v2.0 - MAJOR BUG FIXES
+// © Volume Structure Analyzer v2.1 - Clean Display Version
 
 //@version=5
 indicator("Volume Structure Analyzer", shorttitle="VSA", overlay=true, max_boxes_count=50, max_lines_count=50, max_labels_count=100)
@@ -11,6 +11,11 @@ indicator("Volume Structure Analyzer", shorttitle="VSA", overlay=true, max_boxes
 // accumulation/distribution zones and generate trading signals based on
 // Wyckoff methodology and Volume Price Analysis (VPA).
 //
+// VERSION 2.1 CHANGES:
+// - Removed volume histogram overlay (use TradingView's built-in volume instead)
+// - Keeps main chart clean and focused on zones, signals, and price action
+// - Volume analysis still performed internally for climax detection
+//
 // VERSION 2.0 FIXES:
 // - Fixed accumulation zone detection (was too strict, now properly tracks consolidation)
 // - Simplified distribution zone detection (was overly complex)
@@ -20,7 +25,7 @@ indicator("Volume Structure Analyzer", shorttitle="VSA", overlay=true, max_boxes
 // - Added debugging features for troubleshooting
 //
 // Author: Pine Script Expert
-// Version: 2.0
+// Version: 2.1
 // Date: 2025-12-15
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -42,7 +47,6 @@ lookback_period = input.int(10, "Pivot Lookback Period", minval=5, maxval=20, gr
 // Display Options
 show_accumulation = input.bool(true, "Show Accumulation Zones", group="Display Options")
 show_distribution = input.bool(true, "Show Distribution Zones", group="Display Options")
-show_volume_hist = input.bool(true, "Show Volume Histogram", group="Display Options")
 show_signals = input.bool(true, "Show Buy/Sell Signals", group="Display Options")
 show_divergence = input.bool(true, "Show Divergence Lines", group="Display Options")
 show_warnings = input.bool(true, "Show Warning Labels", group="Display Options")
@@ -517,46 +521,13 @@ plot(strong_sell or sell_signal ? high * 1.001 : na, title="Sell Dots",
      color=color.red, style=plot.style_circles, linewidth=2)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// VISUAL PLOTTING - VOLUME PANEL
+// VOLUME PANEL - REMOVED (Use TradingView's built-in volume)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-// Volume Histogram Color Logic
-vol_color = color.gray
-if show_volume_hist
-    if volume > vol_sma
-        if close > open
-            vol_color := color.green  // Vol up + Price up
-        else
-            vol_color := bullish_climax ? color.new(color.lime, 30) : color.new(color.green, 60)
-    else
-        if close < open
-            vol_color := color.red  // Vol down + Price down
-        else
-            vol_color := bearish_climax ? color.new(color.red, 30) : color.new(color.red, 60)
-
-    // Climax highlights
-    if bullish_climax
-        vol_color := color.new(color.lime, 0)
-    if bearish_climax
-        vol_color := color.new(color.red, 0)
-
-// Plot volume histogram
-plot(show_volume_hist ? volume : na, title="Volume", color=vol_color,
-     style=plot.style_histogram, linewidth=1)
-
-// Volume MA lines
-plot(show_volume_hist ? vol_fast_ma : na, title="Fast Vol MA",
-     color=color.blue, linewidth=1)
-plot(show_volume_hist ? vol_slow_ma : na, title="Slow Vol MA",
-     color=color.orange, linewidth=1)
-
-// Threshold line
-plot(show_volume_hist ? vol_sma * volume_climax_threshold : na,
-     title="Climax Threshold", color=color.gray, linewidth=1, style=plot.style_linebr)
-
-// Volume trend background
-vol_bg_color = volume_trend_bullish ? color.new(color.green, 95) : color.new(color.red, 95)
-bgcolor(show_volume_hist ? vol_bg_color : na, title="Volume Trend BG")
+// Volume calculations are done above for climax detection and zone analysis.
+// We don't plot volume histogram here because:
+// 1. overlay=true causes volume to overlap with price
+// 2. TradingView already has built-in volume panel
+// 3. Keeps the main chart clean and focused on zones/signals
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FIX #6: DEBUGGING FEATURES

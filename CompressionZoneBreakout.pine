@@ -1,0 +1,366 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Compression Zone Breakout Detector
+
+//@version=5
+indicator("Compression Zone Breakout Detector", shorttitle="CZBD", overlay=true, max_boxes_count=50, max_lines_count=100, max_labels_count=100)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESCRIPTION
+// ═══════════════════════════════════════════════════════════════════════════════
+// Detects price compression zones and alerts when price breaks out with volume
+// confirmation. Designed for swing trading on 5m-1H timeframes.
+//
+// Features:
+// 1. Compression Zone Detection - identifies tight price ranges
+// 2. Volume Spike Confirmation - validates breakouts with volume
+// 3. Entry/SL/TP Visualization - shows trading levels
+// 4. Smart Signal Filtering - prevents signal spam
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// USER INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Compression Zone Settings
+compression_length = input.int(20, "Compression Length", minval=5, maxval=100,
+    tooltip="Minimum number of bars to form a compression zone", group="Compression Zone")
+range_threshold = input.float(5.0, "Range Threshold %", minval=1.0, maxval=20.0, step=0.5,
+    tooltip="Maximum percentage range to be considered compression", group="Compression Zone")
+max_zone_bars = input.int(50, "Max Zone Bars", minval=20, maxval=100,
+    tooltip="Reset zone detection if compression lasts longer than this", group="Compression Zone")
+
+// Volume Settings
+volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=50, group="Volume")
+volume_multiplier = input.float(3.0, "Volume Spike Multiplier", minval=1.5, maxval=10.0, step=0.5,
+    tooltip="Minimum volume ratio vs MA to confirm breakout", group="Volume")
+
+// Signal Settings
+signal_cooldown = input.int(5, "Signal Cooldown (bars)", minval=1, maxval=20,
+    tooltip="Minimum bars between signals to prevent spam", group="Signal")
+
+// Display Options
+show_compression_box = input.bool(true, "Show Compression Box", group="Display")
+show_sl_tp_lines = input.bool(true, "Show SL/TP Lines", group="Display")
+show_labels = input.bool(true, "Show Info Labels", group="Display")
+box_color = input.color(color.new(color.yellow, 80), "Compression Box Color", group="Display")
+sl_color = input.color(color.red, "Stop Loss Color", group="Display")
+tp_color = input.color(color.green, "Take Profit Color", group="Display")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BASIC CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Ensure we have enough bars
+var bool has_enough_bars = false
+if bar_index >= compression_length
+    has_enough_bars := true
+
+// Price range calculations
+highest_N = ta.highest(high, compression_length)
+lowest_N = ta.lowest(low, compression_length)
+range_pct = lowest_N > 0 ? (highest_N - lowest_N) / lowest_N * 100 : 0
+
+// Volume calculations
+volume_ma = ta.sma(volume, volume_ma_length)
+volume_ratio = volume_ma > 0 ? volume / volume_ma : 0
+
+// Compression detection
+is_compression = range_pct < range_threshold and has_enough_bars
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STATE TRACKING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Track compression zone
+var bool in_compression = false
+var int compression_start_time = na
+var int compression_bar_count = 0
+var float zone_high = na
+var float zone_low = na
+var float zone_range_pct = na
+
+// Signal cooldown tracking
+var int last_signal_bar = 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPRESSION ZONE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if has_enough_bars
+    if is_compression
+        if not in_compression
+            // Start new compression zone
+            in_compression := true
+            compression_start_time := time
+            compression_bar_count := 1
+            zone_high := highest_N
+            zone_low := lowest_N
+            zone_range_pct := range_pct
+        else
+            // Continue existing compression zone
+            compression_bar_count += 1
+            zone_high := math.max(zone_high, high)
+            zone_low := math.min(zone_low, low)
+            zone_range_pct := zone_low > 0 ? (zone_high - zone_low) / zone_low * 100 : 0
+
+            // Check if zone exceeded max bars - reset and look for new zone
+            if compression_bar_count > max_zone_bars
+                in_compression := false
+                compression_bar_count := 0
+                zone_high := na
+                zone_low := na
+                zone_range_pct := na
+    else
+        // Price range expanded - check if still valid compression
+        if in_compression
+            // Update zone boundaries for current bar
+            zone_high := math.max(nz(zone_high), high)
+            zone_low := math.min(nz(zone_low), low)
+
+            // Recalculate zone range
+            zone_range_pct := zone_low > 0 ? (zone_high - zone_low) / zone_low * 100 : 0
+
+            // Exit if zone range expands too much (1.5x threshold)
+            if zone_range_pct > range_threshold * 1.5
+                in_compression := false
+                compression_bar_count := 0
+                zone_high := na
+                zone_low := na
+                zone_range_pct := na
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BREAKOUT DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Use previous bar's zone values for breakout detection
+prev_zone_high = nz(zone_high[1], highest_N[1])
+prev_zone_low = nz(zone_low[1], lowest_N[1])
+prev_in_compression = nz(in_compression[1], is_compression[1])
+prev_zone_range_pct = nz(zone_range_pct[1], range_pct[1])
+
+// Check if signal is allowed (cooldown period passed)
+signal_allowed = (bar_index - last_signal_bar) >= signal_cooldown
+
+// Breakout conditions
+breakout_up = close > prev_zone_high and
+              volume_ratio > volume_multiplier and
+              prev_in_compression and
+              signal_allowed and
+              has_enough_bars
+
+breakdown = close < prev_zone_low and
+            volume_ratio > volume_multiplier and
+            prev_in_compression and
+            signal_allowed and
+            has_enough_bars
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGNAL GENERATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Initialize signal variables
+var bool long_signal = false
+var bool short_signal = false
+var float entry_price = na
+var float stop_loss = na
+var float take_profit = na
+
+// Reset signals each bar
+long_signal := false
+short_signal := false
+
+// LONG Signal
+if breakout_up
+    long_signal := true
+    entry_price := close
+    stop_loss := prev_zone_low
+    take_profit := entry_price + (prev_zone_high - prev_zone_low) * 2
+    last_signal_bar := bar_index
+
+    // Exit compression state after breakout
+    in_compression := false
+    compression_bar_count := 0
+
+// SHORT Signal
+if breakdown
+    short_signal := true
+    entry_price := close
+    stop_loss := prev_zone_high
+    take_profit := entry_price - (prev_zone_high - prev_zone_low) * 2
+    last_signal_bar := bar_index
+
+    // Exit compression state after breakdown
+    in_compression := false
+    compression_bar_count := 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION - COMPRESSION BOX
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var box compression_box = na
+
+if show_compression_box
+    if in_compression and not na(compression_start_time) and not na(zone_high) and not na(zone_low)
+        // Delete old box to prevent duplicates
+        if not na(compression_box)
+            box.delete(compression_box)
+
+        // Create new box extending to current bar
+        compression_box := box.new(
+            compression_start_time, zone_high, time, zone_low,
+            xloc=xloc.bar_time,
+            border_color=color.new(color.yellow, 0),
+            bgcolor=box_color,
+            border_width=2,
+            text="COMPRESSION\nRange: " + str.tostring(zone_range_pct, "#.##") + "%\nBars: " + str.tostring(compression_bar_count),
+            text_color=color.yellow,
+            text_size=size.small,
+            text_halign=text.align_left,
+            text_valign=text.align_top
+        )
+    else
+        // Clear box when not in compression
+        if not na(compression_box)
+            box.delete(compression_box)
+        compression_box := na
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION - BREAKOUT SIGNALS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Breakout Up Arrow
+plotshape(long_signal, title="Breakout Up",
+    location=location.belowbar,
+    color=color.new(color.lime, 0),
+    style=shape.arrowup,
+    size=size.large,
+    text="BREAKOUT UP")
+
+// Breakdown Arrow
+plotshape(short_signal, title="Breakdown",
+    location=location.abovebar,
+    color=color.new(color.red, 0),
+    style=shape.arrowdown,
+    size=size.large,
+    text="BREAKDOWN")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION - LABELS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if show_labels
+    // Long signal label
+    if long_signal
+        label.new(
+            bar_index, low,
+            "Zone: " + str.tostring(prev_zone_range_pct, "#.##") + "%\nVol: " + str.tostring(volume_ratio, "#.#") + "x\nEntry: " + str.tostring(entry_price, "#.####") + "\nSL: " + str.tostring(stop_loss, "#.####") + "\nTP: " + str.tostring(take_profit, "#.####"),
+            xloc=xloc.bar_index,
+            yloc=yloc.price,
+            color=color.new(color.lime, 20),
+            style=label.style_label_up,
+            textcolor=color.white,
+            size=size.normal
+        )
+
+    // Short signal label
+    if short_signal
+        label.new(
+            bar_index, high,
+            "Zone: " + str.tostring(prev_zone_range_pct, "#.##") + "%\nVol: " + str.tostring(volume_ratio, "#.#") + "x\nEntry: " + str.tostring(entry_price, "#.####") + "\nSL: " + str.tostring(stop_loss, "#.####") + "\nTP: " + str.tostring(take_profit, "#.####"),
+            xloc=xloc.bar_index,
+            yloc=yloc.price,
+            color=color.new(color.red, 20),
+            style=label.style_label_down,
+            textcolor=color.white,
+            size=size.normal
+        )
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION - SL/TP LINES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if show_sl_tp_lines
+    // Long signal lines
+    if long_signal
+        // Stop Loss line (red dashed)
+        line.new(
+            bar_index, stop_loss, bar_index + 20, stop_loss,
+            xloc=xloc.bar_index,
+            color=sl_color,
+            width=2,
+            style=line.style_dashed
+        )
+        // Take Profit line (green dashed)
+        line.new(
+            bar_index, take_profit, bar_index + 20, take_profit,
+            xloc=xloc.bar_index,
+            color=tp_color,
+            width=2,
+            style=line.style_dashed
+        )
+        // Entry line (white solid)
+        line.new(
+            bar_index, entry_price, bar_index + 20, entry_price,
+            xloc=xloc.bar_index,
+            color=color.white,
+            width=1,
+            style=line.style_solid
+        )
+
+    // Short signal lines
+    if short_signal
+        // Stop Loss line (red dashed)
+        line.new(
+            bar_index, stop_loss, bar_index + 20, stop_loss,
+            xloc=xloc.bar_index,
+            color=sl_color,
+            width=2,
+            style=line.style_dashed
+        )
+        // Take Profit line (green dashed)
+        line.new(
+            bar_index, take_profit, bar_index + 20, take_profit,
+            xloc=xloc.bar_index,
+            color=tp_color,
+            width=2,
+            style=line.style_dashed
+        )
+        // Entry line (white solid)
+        line.new(
+            bar_index, entry_price, bar_index + 20, entry_price,
+            xloc=xloc.bar_index,
+            color=color.white,
+            width=1,
+            style=line.style_solid
+        )
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEBUG VALUES (Data Window)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+plot(range_pct, "Range %", display=display.data_window)
+plot(volume_ratio, "Volume Ratio", display=display.data_window)
+plot(in_compression ? 1 : 0, "In Compression", display=display.data_window)
+plot(compression_bar_count, "Compression Bars", display=display.data_window)
+plot(zone_high, "Zone High", display=display.data_window)
+plot(zone_low, "Zone Low", display=display.data_window)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Breakout Up Alert
+alertcondition(long_signal, title="Breakout Up",
+    message="🚀 BREAKOUT UP! Zone: {{plot_0}}%, Vol: {{plot_1}}x")
+
+// Breakdown Alert
+alertcondition(short_signal, title="Breakdown",
+    message="📉 BREAKDOWN! Zone: {{plot_0}}%, Vol: {{plot_1}}x")
+
+// Any Signal Alert
+alertcondition(long_signal or short_signal, title="Any Breakout Signal",
+    message="⚡ COMPRESSION BREAKOUT DETECTED!")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// END OF INDICATOR
+// ═══════════════════════════════════════════════════════════════════════════════

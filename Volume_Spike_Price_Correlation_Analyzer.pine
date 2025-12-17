@@ -230,12 +230,12 @@ if show_table
 // Strong Bullish Alert
 alertcondition(long_strong,
      title="Strong Bullish Signal",
-     message="🔥 STRONG BULLISH! Vol: {{plot_0}}x MA, Price: +" + str.tostring(price_change_pct, "#.##") + "% - Consider LONG")
+     message="🔥 STRONG BULLISH! Volume spike with positive price movement - Consider LONG")
 
 // Strong Bearish Alert
 alertcondition(short_strong,
      title="Strong Bearish Signal",
-     message="❄️ STRONG BEARISH! Vol: {{plot_0}}x MA, Price: " + str.tostring(price_change_pct, "#.##") + "% - Consider SHORT")
+     message="❄️ STRONG BEARISH! Volume spike with negative price movement - Consider SHORT")
 
 // Absorption Accumulation Alert
 alertcondition(valid_spike and signal_type == 3 and sub_type == 1,
@@ -255,22 +255,22 @@ alertcondition(valid_spike and signal_type == 3 and sub_type == 0,
 // Long Entry Alert (includes breakout after accumulation)
 alertcondition(long_signal,
      title="Long Entry Signal",
-     message="🔼 LONG SIGNAL! Confidence: " + long_confidence + " - Volume spike with bullish confirmation")
+     message="🔼 LONG SIGNAL! Volume spike with bullish confirmation - Check chart for confidence level")
 
 // Short Entry Alert (includes breakdown after distribution)
 alertcondition(short_signal,
      title="Short Entry Signal",
-     message="🔽 SHORT SIGNAL! Confidence: " + short_confidence + " - Volume spike with bearish confirmation")
+     message="🔽 SHORT SIGNAL! Volume spike with bearish confirmation - Check chart for confidence level")
 
 // Watch for Breakout Alert
 alertcondition(watch_long,
      title="Watch for Breakout",
-     message="👀 ACCUMULATION detected - Watch for breakout above " + str.tostring(highest_20, "#.####"))
+     message="👀 ACCUMULATION detected - Watch for breakout above 20-bar high")
 
 // Watch for Breakdown Alert
 alertcondition(watch_short,
      title="Watch for Breakdown",
-     message="👀 DISTRIBUTION detected - Watch for breakdown below " + str.tostring(lowest_20, "#.####"))
+     message="👀 DISTRIBUTION detected - Watch for breakdown below 20-bar low")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // STEP 11: PLOT SIGNALS FOR EXTERNAL USE

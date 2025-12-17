@@ -22,21 +22,16 @@ indicator("Compression Zone Breakout Detector", shorttitle="CZBD", overlay=true,
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Compression Zone Settings
-compression_length = input.int(20, "Compression Length", minval=5, maxval=100,
-    tooltip="Minimum number of bars to form a compression zone", group="Compression Zone")
-range_threshold = input.float(5.0, "Range Threshold %", minval=1.0, maxval=20.0, step=0.5,
-    tooltip="Maximum percentage range to be considered compression", group="Compression Zone")
-max_zone_bars = input.int(50, "Max Zone Bars", minval=20, maxval=100,
-    tooltip="Reset zone detection if compression lasts longer than this", group="Compression Zone")
+compression_length = input.int(20, "Compression Length", minval=5, maxval=100, tooltip="Minimum number of bars to form a compression zone", group="Compression Zone")
+range_threshold = input.float(5.0, "Range Threshold %", minval=1.0, maxval=20.0, step=0.5, tooltip="Maximum percentage range to be considered compression", group="Compression Zone")
+max_zone_bars = input.int(50, "Max Zone Bars", minval=20, maxval=100, tooltip="Reset zone detection if compression lasts longer than this", group="Compression Zone")
 
 // Volume Settings
 volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=50, group="Volume")
-volume_multiplier = input.float(3.0, "Volume Spike Multiplier", minval=1.5, maxval=10.0, step=0.5,
-    tooltip="Minimum volume ratio vs MA to confirm breakout", group="Volume")
+volume_multiplier = input.float(3.0, "Volume Spike Multiplier", minval=1.5, maxval=10.0, step=0.5, tooltip="Minimum volume ratio vs MA to confirm breakout", group="Volume")
 
 // Signal Settings
-signal_cooldown = input.int(5, "Signal Cooldown (bars)", minval=1, maxval=20,
-    tooltip="Minimum bars between signals to prevent spam", group="Signal")
+signal_cooldown = input.int(5, "Signal Cooldown (bars)", minval=1, maxval=20, tooltip="Minimum bars between signals to prevent spam", group="Signal")
 
 // Display Options
 show_compression_box = input.bool(true, "Show Compression Box", group="Display")
@@ -142,17 +137,9 @@ prev_zone_range_pct = nz(zone_range_pct[1], range_pct[1])
 signal_allowed = (bar_index - last_signal_bar) >= signal_cooldown
 
 // Breakout conditions
-breakout_up = close > prev_zone_high and
-              volume_ratio > volume_multiplier and
-              prev_in_compression and
-              signal_allowed and
-              has_enough_bars
+breakout_up = close > prev_zone_high and volume_ratio > volume_multiplier and prev_in_compression and signal_allowed and has_enough_bars
 
-breakdown = close < prev_zone_low and
-            volume_ratio > volume_multiplier and
-            prev_in_compression and
-            signal_allowed and
-            has_enough_bars
+breakdown = close < prev_zone_low and volume_ratio > volume_multiplier and prev_in_compression and signal_allowed and has_enough_bars
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SIGNAL GENERATION
@@ -205,19 +192,11 @@ if show_compression_box
         if not na(compression_box)
             box.delete(compression_box)
 
+        // Create box text
+        box_text = "COMPRESSION\nRange: " + str.tostring(zone_range_pct, "#.##") + "%\nBars: " + str.tostring(compression_bar_count)
+
         // Create new box extending to current bar
-        compression_box := box.new(
-            compression_start_time, zone_high, time, zone_low,
-            xloc=xloc.bar_time,
-            border_color=color.new(color.yellow, 0),
-            bgcolor=box_color,
-            border_width=2,
-            text="COMPRESSION\nRange: " + str.tostring(zone_range_pct, "#.##") + "%\nBars: " + str.tostring(compression_bar_count),
-            text_color=color.yellow,
-            text_size=size.small,
-            text_halign=text.align_left,
-            text_valign=text.align_top
-        )
+        compression_box := box.new(compression_start_time, zone_high, time, zone_low, xloc=xloc.bar_time, border_color=color.new(color.yellow, 0), bgcolor=box_color, border_width=2, text=box_text, text_color=color.yellow, text_size=size.small, text_halign=text.align_left, text_valign=text.align_top)
     else
         // Clear box when not in compression
         if not na(compression_box)
@@ -229,20 +208,10 @@ if show_compression_box
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Breakout Up Arrow
-plotshape(long_signal, title="Breakout Up",
-    location=location.belowbar,
-    color=color.new(color.lime, 0),
-    style=shape.arrowup,
-    size=size.large,
-    text="BREAKOUT UP")
+plotshape(long_signal, title="Breakout Up", location=location.belowbar, color=color.new(color.lime, 0), style=shape.arrowup, size=size.large, text="BREAKOUT UP")
 
 // Breakdown Arrow
-plotshape(short_signal, title="Breakdown",
-    location=location.abovebar,
-    color=color.new(color.red, 0),
-    style=shape.arrowdown,
-    size=size.large,
-    text="BREAKDOWN")
+plotshape(short_signal, title="Breakdown", location=location.abovebar, color=color.new(color.red, 0), style=shape.arrowdown, size=size.large, text="BREAKDOWN")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VISUALIZATION - LABELS
@@ -251,29 +220,13 @@ plotshape(short_signal, title="Breakdown",
 if show_labels
     // Long signal label
     if long_signal
-        label.new(
-            bar_index, low,
-            "Zone: " + str.tostring(prev_zone_range_pct, "#.##") + "%\nVol: " + str.tostring(volume_ratio, "#.#") + "x\nEntry: " + str.tostring(entry_price, "#.####") + "\nSL: " + str.tostring(stop_loss, "#.####") + "\nTP: " + str.tostring(take_profit, "#.####"),
-            xloc=xloc.bar_index,
-            yloc=yloc.price,
-            color=color.new(color.lime, 20),
-            style=label.style_label_up,
-            textcolor=color.white,
-            size=size.normal
-        )
+        label_text = "Zone: " + str.tostring(prev_zone_range_pct, "#.##") + "%\nVol: " + str.tostring(volume_ratio, "#.#") + "x\nEntry: " + str.tostring(entry_price, "#.####") + "\nSL: " + str.tostring(stop_loss, "#.####") + "\nTP: " + str.tostring(take_profit, "#.####")
+        label.new(bar_index, low, label_text, xloc=xloc.bar_index, yloc=yloc.price, color=color.new(color.lime, 20), style=label.style_label_up, textcolor=color.white, size=size.normal)
 
     // Short signal label
     if short_signal
-        label.new(
-            bar_index, high,
-            "Zone: " + str.tostring(prev_zone_range_pct, "#.##") + "%\nVol: " + str.tostring(volume_ratio, "#.#") + "x\nEntry: " + str.tostring(entry_price, "#.####") + "\nSL: " + str.tostring(stop_loss, "#.####") + "\nTP: " + str.tostring(take_profit, "#.####"),
-            xloc=xloc.bar_index,
-            yloc=yloc.price,
-            color=color.new(color.red, 20),
-            style=label.style_label_down,
-            textcolor=color.white,
-            size=size.normal
-        )
+        label_text = "Zone: " + str.tostring(prev_zone_range_pct, "#.##") + "%\nVol: " + str.tostring(volume_ratio, "#.#") + "x\nEntry: " + str.tostring(entry_price, "#.####") + "\nSL: " + str.tostring(stop_loss, "#.####") + "\nTP: " + str.tostring(take_profit, "#.####")
+        label.new(bar_index, high, label_text, xloc=xloc.bar_index, yloc=yloc.price, color=color.new(color.red, 20), style=label.style_label_down, textcolor=color.white, size=size.normal)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VISUALIZATION - SL/TP LINES
@@ -282,57 +235,15 @@ if show_labels
 if show_sl_tp_lines
     // Long signal lines
     if long_signal
-        // Stop Loss line (red dashed)
-        line.new(
-            bar_index, stop_loss, bar_index + 20, stop_loss,
-            xloc=xloc.bar_index,
-            color=sl_color,
-            width=2,
-            style=line.style_dashed
-        )
-        // Take Profit line (green dashed)
-        line.new(
-            bar_index, take_profit, bar_index + 20, take_profit,
-            xloc=xloc.bar_index,
-            color=tp_color,
-            width=2,
-            style=line.style_dashed
-        )
-        // Entry line (white solid)
-        line.new(
-            bar_index, entry_price, bar_index + 20, entry_price,
-            xloc=xloc.bar_index,
-            color=color.white,
-            width=1,
-            style=line.style_solid
-        )
+        line.new(bar_index, stop_loss, bar_index + 20, stop_loss, xloc=xloc.bar_index, color=sl_color, width=2, style=line.style_dashed)
+        line.new(bar_index, take_profit, bar_index + 20, take_profit, xloc=xloc.bar_index, color=tp_color, width=2, style=line.style_dashed)
+        line.new(bar_index, entry_price, bar_index + 20, entry_price, xloc=xloc.bar_index, color=color.white, width=1, style=line.style_solid)
 
     // Short signal lines
     if short_signal
-        // Stop Loss line (red dashed)
-        line.new(
-            bar_index, stop_loss, bar_index + 20, stop_loss,
-            xloc=xloc.bar_index,
-            color=sl_color,
-            width=2,
-            style=line.style_dashed
-        )
-        // Take Profit line (green dashed)
-        line.new(
-            bar_index, take_profit, bar_index + 20, take_profit,
-            xloc=xloc.bar_index,
-            color=tp_color,
-            width=2,
-            style=line.style_dashed
-        )
-        // Entry line (white solid)
-        line.new(
-            bar_index, entry_price, bar_index + 20, entry_price,
-            xloc=xloc.bar_index,
-            color=color.white,
-            width=1,
-            style=line.style_solid
-        )
+        line.new(bar_index, stop_loss, bar_index + 20, stop_loss, xloc=xloc.bar_index, color=sl_color, width=2, style=line.style_dashed)
+        line.new(bar_index, take_profit, bar_index + 20, take_profit, xloc=xloc.bar_index, color=tp_color, width=2, style=line.style_dashed)
+        line.new(bar_index, entry_price, bar_index + 20, entry_price, xloc=xloc.bar_index, color=color.white, width=1, style=line.style_solid)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEBUG VALUES (Data Window)
@@ -350,16 +261,13 @@ plot(zone_low, "Zone Low", display=display.data_window)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Breakout Up Alert
-alertcondition(long_signal, title="Breakout Up",
-    message="🚀 BREAKOUT UP! Zone: {{plot_0}}%, Vol: {{plot_1}}x")
+alertcondition(long_signal, title="Breakout Up", message="🚀 BREAKOUT UP! Zone: {{plot_0}}%, Vol: {{plot_1}}x")
 
 // Breakdown Alert
-alertcondition(short_signal, title="Breakdown",
-    message="📉 BREAKDOWN! Zone: {{plot_0}}%, Vol: {{plot_1}}x")
+alertcondition(short_signal, title="Breakdown", message="📉 BREAKDOWN! Zone: {{plot_0}}%, Vol: {{plot_1}}x")
 
 // Any Signal Alert
-alertcondition(long_signal or short_signal, title="Any Breakout Signal",
-    message="⚡ COMPRESSION BREAKOUT DETECTED!")
+alertcondition(long_signal or short_signal, title="Any Breakout Signal", message="⚡ COMPRESSION BREAKOUT DETECTED!")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // END OF INDICATOR

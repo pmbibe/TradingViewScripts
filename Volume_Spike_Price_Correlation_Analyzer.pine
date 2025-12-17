@@ -1,0 +1,283 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © pmbibe
+// @version=6
+indicator("Volume Spike with Price Correlation Analyzer", shorttitle="VolSpike Analyzer", overlay=false, max_labels_count=500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+volume_ma_period    = input.int(20, "Volume MA Period", minval=5, maxval=100)
+spike_threshold     = input.float(5.0, "Spike Threshold (Xx MA)", minval=1.5, maxval=20.0, step=0.5)
+price_move_threshold = input.float(3.0, "Price Move Threshold (%)", minval=0.5, maxval=20.0, step=0.5)
+gap_threshold       = input.float(10.0, "Gap Threshold (%)", minval=5.0, maxval=30.0, step=1.0)
+consecutive_bars    = input.int(3, "Consecutive Spike Filter (bars)", minval=2, maxval=10)
+
+// Visual settings
+show_labels         = input.bool(true, "Show Labels on Spikes", group="Display")
+show_table          = input.bool(true, "Show Dashboard Table", group="Display")
+table_position      = input.string("Top Right", "Table Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Display")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 1: VOLUME ANALYSIS
+// ══════════════════════════════════════════════════════════════════════════════
+volume_ma = ta.sma(volume, volume_ma_period)
+volume_ratio = volume > 0 and volume_ma > 0 ? volume / volume_ma : 0.0
+is_spike = volume_ratio >= spike_threshold
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 2: PRICE MOVEMENT
+// ══════════════════════════════════════════════════════════════════════════════
+price_change_pct = open != 0 ? ((close - open) / open) * 100 : 0.0
+price_range_pct = open != 0 ? ((high - low) / open) * 100 : 0.0
+
+// Gap detection (compared to previous close)
+gap_pct = close[1] != 0 ? math.abs((open - close[1]) / close[1]) * 100 : 0.0
+is_gap = gap_pct > gap_threshold
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 3: TREND CONTEXT
+// ══════════════════════════════════════════════════════════════════════════════
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+is_uptrend = ema20 > ema50
+trend_str = is_uptrend ? "UPTREND" : "DOWNTREND"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 4: CONSECUTIVE SPIKE FILTER
+// ══════════════════════════════════════════════════════════════════════════════
+// Count consecutive spikes - only analyze the first one in a sequence
+var int spike_count = 0
+var bool is_first_spike = false
+
+if is_spike
+    spike_count := spike_count + 1
+    is_first_spike := spike_count == 1
+else
+    spike_count := 0
+    is_first_spike := false
+
+// Valid spike = first spike in sequence and not a gap
+valid_spike = is_spike and is_first_spike and not is_gap and volume > 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 5: CORRELATION ANALYSIS - Signal Classification
+// ══════════════════════════════════════════════════════════════════════════════
+// Signal types: 0=None, 1=STRONG_BULLISH, 2=STRONG_BEARISH, 3=ABSORPTION
+var int signal_type = 0
+// Sub-types for absorption: 0=UNCERTAIN, 1=ACCUMULATION, 2=DISTRIBUTION
+var int sub_type = 0
+var string signal_str = "NONE"
+var string sub_type_str = ""
+var string meaning = ""
+
+if valid_spike
+    if price_change_pct > price_move_threshold
+        signal_type := 1
+        signal_str := "STRONG_BULLISH"
+        sub_type := 0
+        sub_type_str := ""
+        meaning := "Real buying pressure, continuation likely"
+    else if price_change_pct < -price_move_threshold
+        signal_type := 2
+        signal_str := "STRONG_BEARISH"
+        sub_type := 0
+        sub_type_str := ""
+        meaning := "Panic selling, downtrend continuation"
+    else if math.abs(price_change_pct) <= price_move_threshold
+        signal_type := 3
+        signal_str := "ABSORPTION"
+        meaning := "Whale accumulation/distribution, big move coming"
+        // Determine accumulation vs distribution
+        if close > open and close > ema50
+            sub_type := 1
+            sub_type_str := "ACCUMULATION (Bullish)"
+        else if close < open and close < ema50
+            sub_type := 2
+            sub_type_str := "DISTRIBUTION (Bearish)"
+        else
+            sub_type := 0
+            sub_type_str := "UNCERTAIN"
+else
+    signal_type := 0
+    signal_str := "NONE"
+    sub_type := 0
+    sub_type_str := ""
+    meaning := ""
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 6: ENTRY CONDITIONS
+// ══════════════════════════════════════════════════════════════════════════════
+// Breakout levels for absorption signals
+highest_20 = ta.highest(high, 20)[1]
+lowest_20 = ta.lowest(low, 20)[1]
+
+// LONG Conditions
+long_strong = valid_spike and signal_type == 1 and is_uptrend
+long_absorption_breakout = valid_spike and signal_type == 3 and sub_type == 1 and close > highest_20
+
+long_signal = long_strong or long_absorption_breakout
+long_confidence = long_strong ? "HIGH" : long_absorption_breakout ? "MEDIUM" : ""
+
+// SHORT Conditions
+short_strong = valid_spike and signal_type == 2 and not is_uptrend
+short_absorption_breakdown = valid_spike and signal_type == 3 and sub_type == 2 and close < lowest_20
+
+short_signal = short_strong or short_absorption_breakdown
+short_confidence = short_strong ? "HIGH" : short_absorption_breakdown ? "MEDIUM" : ""
+
+// Watch signals (absorption without breakout yet)
+watch_long = valid_spike and signal_type == 3 and sub_type == 1 and close <= highest_20
+watch_short = valid_spike and signal_type == 3 and sub_type == 2 and close >= lowest_20
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 7: VISUALIZATION - Volume Bars
+// ══════════════════════════════════════════════════════════════════════════════
+// Color coding for volume bars
+bar_color = switch
+    valid_spike and signal_type == 1 => color.new(color.green, 0)   // Dark green for STRONG_BULLISH
+    valid_spike and signal_type == 2 => color.new(color.red, 0)     // Dark red for STRONG_BEARISH
+    valid_spike and signal_type == 3 => color.new(color.yellow, 0)  // Yellow for ABSORPTION
+    is_gap and is_spike => color.new(color.purple, 30)              // Purple for GAP (excluded)
+    => color.new(color.gray, 50)                                     // Gray for normal volume
+
+plot(volume, "Volume", color=bar_color, style=plot.style_columns)
+plot(volume_ma, "Volume MA", color=color.new(color.orange, 0), linewidth=2)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 8: VISUALIZATION - Labels on Spikes
+// ══════════════════════════════════════════════════════════════════════════════
+if show_labels and valid_spike
+    label_text = signal_str + "\nVol: " + str.tostring(volume_ratio, "#.#") + "x\nPrice: " + (price_change_pct >= 0 ? "+" : "") + str.tostring(price_change_pct, "#.##") + "%"
+
+    if signal_type == 3 and sub_type_str != ""
+        label_text := label_text + "\n" + sub_type_str
+
+    if long_signal
+        label_text := label_text + "\n🔼 LONG (" + long_confidence + ")"
+    else if short_signal
+        label_text := label_text + "\n🔽 SHORT (" + short_confidence + ")"
+    else if watch_long
+        label_text := label_text + "\n👀 Watch for Breakout"
+    else if watch_short
+        label_text := label_text + "\n👀 Watch for Breakdown"
+
+    label_color = switch signal_type
+        1 => color.green
+        2 => color.red
+        3 => color.yellow
+        => color.gray
+
+    label.new(bar_index, volume, label_text,
+              xloc=xloc.bar_index, yloc=yloc.price,
+              color=label_color, textcolor=color.black,
+              style=label.style_label_down, size=size.small)
+
+// GAP label
+if show_labels and is_gap and is_spike
+    label.new(bar_index, volume, "GAP\n" + str.tostring(gap_pct, "#.#") + "%\n(Excluded)",
+              xloc=xloc.bar_index, yloc=yloc.price,
+              color=color.purple, textcolor=color.white,
+              style=label.style_label_down, size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 9: VISUALIZATION - Dashboard Table
+// ══════════════════════════════════════════════════════════════════════════════
+table_pos = switch table_position
+    "Top Right" => position.top_right
+    "Top Left" => position.top_left
+    "Bottom Right" => position.bottom_right
+    "Bottom Left" => position.bottom_left
+    => position.top_right
+
+var table dashboard = table.new(table_pos, 2, 5, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.gray)
+
+// Determine action suggestion
+action_str = switch
+    long_signal => "🔼 LONG (" + long_confidence + ")"
+    short_signal => "🔽 SHORT (" + short_confidence + ")"
+    watch_long => "👀 Watch Breakout > " + str.tostring(highest_20, "#.####")
+    watch_short => "👀 Watch Breakdown < " + str.tostring(lowest_20, "#.####")
+    valid_spike and signal_type == 3 => "⏳ Absorption - Wait"
+    => "— No Signal"
+
+type_display = valid_spike ? signal_str + (sub_type_str != "" ? "\n(" + sub_type_str + ")" : "") : "Normal"
+type_color = switch
+    valid_spike and signal_type == 1 => color.green
+    valid_spike and signal_type == 2 => color.red
+    valid_spike and signal_type == 3 => color.yellow
+    => color.gray
+
+if show_table
+    if barstate.islast
+        table.cell(dashboard, 0, 0, "VOLUME ANALYSIS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.blue, 30), text_halign=text.align_center)
+        table.merge_cells(dashboard, 0, 0, 1, 0)
+
+        table.cell(dashboard, 0, 1, "Current:", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+        table.cell(dashboard, 1, 1, str.tostring(volume_ratio, "#.##") + "x", text_color=volume_ratio >= spike_threshold ? color.yellow : color.white, text_size=size.small, text_halign=text.align_right)
+
+        table.cell(dashboard, 0, 2, "Type:", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+        table.cell(dashboard, 1, 2, type_display, text_color=type_color, text_size=size.small, text_halign=text.align_right)
+
+        table.cell(dashboard, 0, 3, "Trend:", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+        table.cell(dashboard, 1, 3, trend_str, text_color=is_uptrend ? color.green : color.red, text_size=size.small, text_halign=text.align_right)
+
+        table.cell(dashboard, 0, 4, "Action:", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+        table.cell(dashboard, 1, 4, action_str, text_color=color.white, text_size=size.small, text_halign=text.align_right)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 10: ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+// Strong Bullish Alert
+alertcondition(long_strong,
+     title="Strong Bullish Signal",
+     message="🔥 STRONG BULLISH! Vol: {{plot_0}}x MA, Price: +" + str.tostring(price_change_pct, "#.##") + "% - Consider LONG")
+
+// Strong Bearish Alert
+alertcondition(short_strong,
+     title="Strong Bearish Signal",
+     message="❄️ STRONG BEARISH! Vol: {{plot_0}}x MA, Price: " + str.tostring(price_change_pct, "#.##") + "% - Consider SHORT")
+
+// Absorption Accumulation Alert
+alertcondition(valid_spike and signal_type == 3 and sub_type == 1,
+     title="Absorption - Accumulation",
+     message="🐋 ABSORPTION detected! ACCUMULATION (Bullish) - Big move coming, watch closely")
+
+// Absorption Distribution Alert
+alertcondition(valid_spike and signal_type == 3 and sub_type == 2,
+     title="Absorption - Distribution",
+     message="🐋 ABSORPTION detected! DISTRIBUTION (Bearish) - Big move coming, watch closely")
+
+// Absorption Uncertain Alert
+alertcondition(valid_spike and signal_type == 3 and sub_type == 0,
+     title="Absorption - Uncertain",
+     message="🐋 ABSORPTION detected! Direction UNCERTAIN - Big move coming, watch closely")
+
+// Long Entry Alert (includes breakout after accumulation)
+alertcondition(long_signal,
+     title="Long Entry Signal",
+     message="🔼 LONG SIGNAL! Confidence: " + long_confidence + " - Volume spike with bullish confirmation")
+
+// Short Entry Alert (includes breakdown after distribution)
+alertcondition(short_signal,
+     title="Short Entry Signal",
+     message="🔽 SHORT SIGNAL! Confidence: " + short_confidence + " - Volume spike with bearish confirmation")
+
+// Watch for Breakout Alert
+alertcondition(watch_long,
+     title="Watch for Breakout",
+     message="👀 ACCUMULATION detected - Watch for breakout above " + str.tostring(highest_20, "#.####"))
+
+// Watch for Breakdown Alert
+alertcondition(watch_short,
+     title="Watch for Breakdown",
+     message="👀 DISTRIBUTION detected - Watch for breakdown below " + str.tostring(lowest_20, "#.####"))
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 11: PLOT SIGNALS FOR EXTERNAL USE
+// ══════════════════════════════════════════════════════════════════════════════
+plot(valid_spike ? signal_type : 0, "Signal Type", display=display.data_window)
+plot(valid_spike ? sub_type : 0, "Sub Type", display=display.data_window)
+plot(long_signal ? 1 : 0, "Long Signal", display=display.data_window)
+plot(short_signal ? 1 : 0, "Short Signal", display=display.data_window)
+plot(volume_ratio, "Volume Ratio", display=display.data_window)
+plot(price_change_pct, "Price Change %", display=display.data_window)

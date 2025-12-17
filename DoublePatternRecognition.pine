@@ -1,0 +1,617 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © PmBiBe
+
+//@version=6
+indicator("Double Top & Double Bottom Pattern Recognition", "Double Pattern", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=100)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Pattern Detection Settings
+grp_pattern = "Pattern Detection"
+i_pivotLeftBars = input.int(10, "Pivot Left Bars", minval=3, maxval=30, group=grp_pattern, tooltip="Number of bars to the left for pivot detection")
+i_pivotRightBars = input.int(10, "Pivot Right Bars", minval=3, maxval=30, group=grp_pattern, tooltip="Number of bars to the right for pivot detection")
+i_peakTolerance = input.float(2.0, "Peak Tolerance (%)", minval=0.1, maxval=10.0, step=0.1, group=grp_pattern, tooltip="Maximum percentage difference allowed between two peaks/troughs")
+i_minPatternWidth = input.int(15, "Min Pattern Width (bars)", minval=5, maxval=50, group=grp_pattern, tooltip="Minimum number of bars for entire pattern")
+i_maxPatternWidth = input.int(100, "Max Pattern Width (bars)", minval=30, maxval=300, group=grp_pattern, tooltip="Maximum number of bars for entire pattern")
+i_minHeightPct = input.float(3.0, "Min Pattern Height (%)", minval=1.0, maxval=20.0, step=0.5, group=grp_pattern, tooltip="Minimum height from peak to neckline as percentage")
+
+// Volume Divergence Settings
+grp_volume = "Volume Divergence"
+i_useVolumeDivergence = input.bool(true, "Use Volume Divergence", group=grp_volume, tooltip="Require volume divergence for pattern confirmation")
+i_volumeDivergenceThreshold = input.float(0.7, "Volume Divergence Threshold", minval=0.3, maxval=1.0, step=0.05, group=grp_volume, tooltip="Peak2 volume must be less than Peak1 volume * threshold")
+
+// Neckline Break Confirmation
+grp_confirm = "Confirmation Settings"
+i_necklineBreakConfirm = input.int(2, "Neckline Break Confirm (bars)", minval=1, maxval=5, group=grp_confirm, tooltip="Number of consecutive closes beyond neckline to confirm break")
+i_minRRRatio = input.float(1.5, "Minimum R:R Ratio", minval=1.0, maxval=5.0, step=0.1, group=grp_confirm, tooltip="Minimum risk/reward ratio for valid entry")
+i_stopBuffer = input.float(2.0, "Stop Loss Buffer (%)", minval=0.5, maxval=5.0, step=0.5, group=grp_confirm, tooltip="Buffer above/below peak for stop loss")
+
+// Visualization Settings
+grp_visual = "Visualization"
+i_showPatternLines = input.bool(true, "Show Pattern Lines", group=grp_visual)
+i_showNeckline = input.bool(true, "Show Neckline", group=grp_visual)
+i_showTargetLine = input.bool(true, "Show Target Line", group=grp_visual)
+i_showDashboard = input.bool(true, "Show Dashboard", group=grp_visual)
+i_showLabels = input.bool(true, "Show Labels", group=grp_visual)
+i_doubleTopColor = input.color(color.red, "Double Top Color", group=grp_visual)
+i_doubleBottomColor = input.color(color.green, "Double Bottom Color", group=grp_visual)
+i_necklineColor = input.color(color.orange, "Neckline Color", group=grp_visual)
+i_targetColor = input.color(color.blue, "Target Color", group=grp_visual)
+
+// Alert Settings
+grp_alerts = "Alerts"
+i_alertOnPattern = input.bool(true, "Alert on Pattern Formation", group=grp_alerts)
+i_alertOnConfirm = input.bool(true, "Alert on Pattern Confirmation", group=grp_alerts)
+i_alertOnInvalidation = input.bool(true, "Alert on Pattern Invalidation", group=grp_alerts)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ VARIABLES & ARRAYS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Arrays to store pivot points
+var float[] peakPrices = array.new_float(5, na)
+var int[] peakBars = array.new_int(5, 0)
+var float[] peakVolumes = array.new_float(5, na)
+
+var float[] troughPrices = array.new_float(5, na)
+var int[] troughBars = array.new_int(5, 0)
+var float[] troughVolumes = array.new_float(5, na)
+
+// Pattern state variables
+var bool isDoubleTop = false
+var bool isDoubleBottom = false
+var bool doubleTopConfirmed = false
+var bool doubleBottomConfirmed = false
+
+// Pattern data
+var float doubleTopNeckline = na
+var float doubleBottomNeckline = na
+var float doubleTopTarget = na
+var float doubleBottomTarget = na
+var float doubleTopStopLoss = na
+var float doubleBottomStopLoss = na
+
+// Pattern tracking
+var int doubleTopBreakCount = 0
+var int doubleBottomBreakCount = 0
+var int patternFormationBar = 0
+
+// Drawing references
+var line necklineLine = na
+var line targetLine = na
+var label patternLabel = na
+
+// Statistics
+var int totalDoubleTopPatterns = 0
+var int totalDoubleBottomPatterns = 0
+var int confirmedDoubleTopPatterns = 0
+var int confirmedDoubleBottomPatterns = 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ PIVOT DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Detect pivot highs and lows
+pivotHigh = ta.pivothigh(high, i_pivotLeftBars, i_pivotRightBars)
+pivotLow = ta.pivotlow(low, i_pivotLeftBars, i_pivotRightBars)
+
+// Get volume at pivot point (offset by right bars since pivot is confirmed later)
+pivotHighVolume = ta.valuewhen(not na(pivotHigh), volume[i_pivotRightBars], 0)
+pivotLowVolume = ta.valuewhen(not na(pivotLow), volume[i_pivotRightBars], 0)
+
+// Update peak arrays when new pivot high is found
+if not na(pivotHigh)
+    array.unshift(peakPrices, pivotHigh)
+    array.unshift(peakBars, bar_index - i_pivotRightBars)
+    array.unshift(peakVolumes, pivotHighVolume)
+    array.pop(peakPrices)
+    array.pop(peakBars)
+    array.pop(peakVolumes)
+
+// Update trough arrays when new pivot low is found
+if not na(pivotLow)
+    array.unshift(troughPrices, pivotLow)
+    array.unshift(troughBars, bar_index - i_pivotRightBars)
+    array.unshift(troughVolumes, pivotLowVolume)
+    array.pop(troughPrices)
+    array.pop(troughBars)
+    array.pop(troughVolumes)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ HELPER FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Function to find lowest low between two bar indices
+findLowestBetween(int startBar, int endBar) =>
+    float lowestVal = na
+    int lowestBar = na
+    if startBar < endBar and endBar <= bar_index
+        barsBack = bar_index - endBar
+        lookbackLen = endBar - startBar
+        for i = 0 to lookbackLen
+            currentBar = barsBack + i
+            if currentBar >= 0 and currentBar < bar_index
+                currentLow = low[currentBar]
+                if na(lowestVal) or currentLow < lowestVal
+                    lowestVal := currentLow
+                    lowestBar := bar_index - currentBar
+    [lowestVal, lowestBar]
+
+// Function to find highest high between two bar indices
+findHighestBetween(int startBar, int endBar) =>
+    float highestVal = na
+    int highestBar = na
+    if startBar < endBar and endBar <= bar_index
+        barsBack = bar_index - endBar
+        lookbackLen = endBar - startBar
+        for i = 0 to lookbackLen
+            currentBar = barsBack + i
+            if currentBar >= 0 and currentBar < bar_index
+                currentHigh = high[currentBar]
+                if na(highestVal) or currentHigh > highestVal
+                    highestVal := currentHigh
+                    highestBar := bar_index - currentBar
+    [highestVal, highestBar]
+
+// Function to calculate percentage difference
+pctDiff(float val1, float val2) =>
+    math.abs(val2 - val1) / val1 * 100
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ DOUBLE TOP DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get two most recent peaks
+peak1Price = array.get(peakPrices, 1)  // Earlier peak
+peak2Price = array.get(peakPrices, 0)  // More recent peak
+peak1Bar = array.get(peakBars, 1)
+peak2Bar = array.get(peakBars, 0)
+peak1Volume = array.get(peakVolumes, 1)
+peak2Volume = array.get(peakVolumes, 0)
+
+// Check if we have valid peak data
+hasValidPeaks = not na(peak1Price) and not na(peak2Price) and peak1Bar > 0 and peak2Bar > 0 and peak2Bar > peak1Bar
+
+// Calculate pattern metrics for Double Top
+dtPatternWidth = hasValidPeaks ? peak2Bar - peak1Bar : 0
+dtPriceDiffPct = hasValidPeaks ? pctDiff(peak1Price, peak2Price) : 100.0
+dtPeaksSimilar = dtPriceDiffPct <= i_peakTolerance
+dtValidWidth = dtPatternWidth >= i_minPatternWidth and dtPatternWidth <= i_maxPatternWidth
+
+// Find valley between peaks (neckline for Double Top)
+[dtValleyPrice, dtValleyBar] = findLowestBetween(peak1Bar, peak2Bar)
+
+// Check pattern height (peaks should be significantly above valley)
+dtPatternHeightPct = hasValidPeaks and not na(dtValleyPrice) ? (peak1Price - dtValleyPrice) / dtValleyPrice * 100 : 0
+dtValidHeight = dtPatternHeightPct >= i_minHeightPct
+
+// Check volume divergence (peak2 volume should be lower than peak1)
+dtVolumeDivRatio = hasValidPeaks and not na(peak1Volume) and peak1Volume > 0 ? peak2Volume / peak1Volume : 1.0
+dtHasVolumeDivergence = i_useVolumeDivergence ? dtVolumeDivRatio < i_volumeDivergenceThreshold : true
+
+// Determine if Double Top pattern is present
+newDoubleTop = hasValidPeaks and
+               dtPeaksSimilar and
+               dtValidWidth and
+               dtValidHeight and
+               dtHasVolumeDivergence and
+               not na(dtValleyPrice)
+
+// Track pattern state changes
+dtPatternFormed = newDoubleTop and not isDoubleTop
+
+// Update Double Top state
+if newDoubleTop
+    isDoubleTop := true
+    doubleTopNeckline := dtValleyPrice
+    doubleTopTarget := dtValleyPrice - (peak1Price - dtValleyPrice)  // Target = neckline - pattern height
+    doubleTopStopLoss := peak2Price * (1 + i_stopBuffer / 100)
+    if dtPatternFormed
+        patternFormationBar := bar_index
+        totalDoubleTopPatterns += 1
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ DOUBLE BOTTOM DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get two most recent troughs
+trough1Price = array.get(troughPrices, 1)  // Earlier trough
+trough2Price = array.get(troughPrices, 0)  // More recent trough
+trough1Bar = array.get(troughBars, 1)
+trough2Bar = array.get(troughBars, 0)
+trough1Volume = array.get(troughVolumes, 1)
+trough2Volume = array.get(troughVolumes, 0)
+
+// Check if we have valid trough data
+hasValidTroughs = not na(trough1Price) and not na(trough2Price) and trough1Bar > 0 and trough2Bar > 0 and trough2Bar > trough1Bar
+
+// Calculate pattern metrics for Double Bottom
+dbPatternWidth = hasValidTroughs ? trough2Bar - trough1Bar : 0
+dbPriceDiffPct = hasValidTroughs ? pctDiff(trough1Price, trough2Price) : 100.0
+dbTroughsSimilar = dbPriceDiffPct <= i_peakTolerance
+dbValidWidth = dbPatternWidth >= i_minPatternWidth and dbPatternWidth <= i_maxPatternWidth
+
+// Find peak between troughs (neckline for Double Bottom)
+[dbPeakPrice, dbPeakBar] = findHighestBetween(trough1Bar, trough2Bar)
+
+// Check pattern height (troughs should be significantly below peak)
+dbPatternHeightPct = hasValidTroughs and not na(dbPeakPrice) ? (dbPeakPrice - trough1Price) / trough1Price * 100 : 0
+dbValidHeight = dbPatternHeightPct >= i_minHeightPct
+
+// Check volume divergence (trough2 volume should be lower than trough1)
+dbVolumeDivRatio = hasValidTroughs and not na(trough1Volume) and trough1Volume > 0 ? trough2Volume / trough1Volume : 1.0
+dbHasVolumeDivergence = i_useVolumeDivergence ? dbVolumeDivRatio < i_volumeDivergenceThreshold : true
+
+// Determine if Double Bottom pattern is present
+newDoubleBottom = hasValidTroughs and
+                  dbTroughsSimilar and
+                  dbValidWidth and
+                  dbValidHeight and
+                  dbHasVolumeDivergence and
+                  not na(dbPeakPrice)
+
+// Track pattern state changes
+dbPatternFormed = newDoubleBottom and not isDoubleBottom
+
+// Update Double Bottom state
+if newDoubleBottom
+    isDoubleBottom := true
+    doubleBottomNeckline := dbPeakPrice
+    doubleBottomTarget := dbPeakPrice + (dbPeakPrice - trough1Price)  // Target = neckline + pattern height
+    doubleBottomStopLoss := trough2Price * (1 - i_stopBuffer / 100)
+    if dbPatternFormed
+        patternFormationBar := bar_index
+        totalDoubleBottomPatterns += 1
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ NECKLINE BREAK DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Double Top: Track closes below neckline
+if isDoubleTop
+    if close < doubleTopNeckline
+        doubleTopBreakCount += 1
+    else
+        doubleTopBreakCount := 0
+
+    // Confirm pattern when neckline is broken
+    if doubleTopBreakCount >= i_necklineBreakConfirm and not doubleTopConfirmed
+        // Calculate R:R ratio
+        dtRisk = doubleTopStopLoss - close
+        dtReward = close - doubleTopTarget
+        dtRRRatio = dtRisk > 0 ? dtReward / dtRisk : 0
+
+        if dtRRRatio >= i_minRRRatio
+            doubleTopConfirmed := true
+            confirmedDoubleTopPatterns += 1
+
+// Double Bottom: Track closes above neckline
+if isDoubleBottom
+    if close > doubleBottomNeckline
+        doubleBottomBreakCount += 1
+    else
+        doubleBottomBreakCount := 0
+
+    // Confirm pattern when neckline is broken
+    if doubleBottomBreakCount >= i_necklineBreakConfirm and not doubleBottomConfirmed
+        // Calculate R:R ratio
+        dbRisk = close - doubleBottomStopLoss
+        dbReward = doubleBottomTarget - close
+        dbRRRatio = dbRisk > 0 ? dbReward / dbRisk : 0
+
+        if dbRRRatio >= i_minRRRatio
+            doubleBottomConfirmed := true
+            confirmedDoubleBottomPatterns += 1
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ PATTERN INVALIDATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Double Top invalidated if price closes above peak2
+dtInvalidated = false
+if isDoubleTop and close > peak2Price
+    isDoubleTop := false
+    doubleTopConfirmed := false
+    doubleTopBreakCount := 0
+    dtInvalidated := true
+
+// Double Bottom invalidated if price closes below trough2
+dbInvalidated = false
+if isDoubleBottom and close < trough2Price
+    isDoubleBottom := false
+    doubleBottomConfirmed := false
+    doubleBottomBreakCount := 0
+    dbInvalidated := true
+
+// False break detection - price returns above/below neckline after confirmation
+dtFalseBreak = false
+if doubleTopConfirmed and close > doubleTopNeckline * 1.01
+    doubleTopConfirmed := false
+    doubleTopBreakCount := 0
+    dtFalseBreak := true
+
+dbFalseBreak = false
+if doubleBottomConfirmed and close < doubleBottomNeckline * 0.99
+    doubleBottomConfirmed := false
+    doubleBottomBreakCount := 0
+    dbFalseBreak := true
+
+// Handle conflicting patterns - prioritize most recent
+if isDoubleTop and isDoubleBottom
+    if peak2Bar > trough2Bar
+        isDoubleBottom := false
+        doubleBottomConfirmed := false
+    else
+        isDoubleTop := false
+        doubleTopConfirmed := false
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ CALCULATE METRICS FOR DISPLAY
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Calculate current R:R ratios
+currentDTRisk = isDoubleTop ? doubleTopStopLoss - close : na
+currentDTReward = isDoubleTop ? close - doubleTopTarget : na
+currentDTRR = isDoubleTop and currentDTRisk > 0 ? currentDTReward / currentDTRisk : na
+
+currentDBRisk = isDoubleBottom ? close - doubleBottomStopLoss : na
+currentDBReward = isDoubleBottom ? doubleBottomTarget - close : na
+currentDBRR = isDoubleBottom and currentDBRisk > 0 ? currentDBReward / currentDBRisk : na
+
+// Pattern strength calculation
+calcPatternStrength(bool isDT, float volDivRatio, float priceDiffPct, int patternWidth, float rrRatio) =>
+    float strength = 0
+
+    // Volume divergence score (max 30)
+    if volDivRatio < 0.5
+        strength += 30
+    else if volDivRatio < 0.7
+        strength += 20
+    else
+        strength += 10
+
+    // Price similarity score (max 30)
+    if priceDiffPct < 0.5
+        strength += 30
+    else if priceDiffPct < 1.0
+        strength += 20
+    else
+        strength += 10
+
+    // Pattern width score (max 20)
+    if patternWidth >= 20 and patternWidth <= 50
+        strength += 20
+    else
+        strength += 10
+
+    // R:R score (max 20)
+    if not na(rrRatio) and rrRatio > 2
+        strength += 20
+    else if not na(rrRatio) and rrRatio > 1.5
+        strength += 10
+
+    math.min(strength, 100)
+
+dtStrength = isDoubleTop ? calcPatternStrength(true, dtVolumeDivRatio, dtPriceDiffPct, dtPatternWidth, currentDTRR) : 0
+dbStrength = isDoubleBottom ? calcPatternStrength(false, dbVolumeDivRatio, dbPriceDiffPct, dbPatternWidth, currentDBRR) : 0
+
+// Grade calculation
+getGrade(float strength) =>
+    if strength >= 80
+        "A+"
+    else if strength >= 70
+        "A"
+    else if strength >= 60
+        "B"
+    else if strength >= 50
+        "C"
+    else
+        "D"
+
+dtGrade = getGrade(dtStrength)
+dbGrade = getGrade(dbStrength)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ VISUALIZATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Draw Double Top pattern
+if dtPatternFormed and i_showPatternLines
+    // Draw peak labels
+    if i_showLabels
+        label.new(peak1Bar, peak1Price, "P1", style=label.style_circle, color=i_doubleTopColor, textcolor=color.white, size=size.small)
+        label.new(peak2Bar, peak2Price, "P2", style=label.style_circle, color=i_doubleTopColor, textcolor=color.white, size=size.small)
+
+    // Draw M shape lines
+    line.new(peak1Bar, peak1Price, dtValleyBar, dtValleyPrice, color=i_doubleTopColor, width=2)
+    line.new(dtValleyBar, dtValleyPrice, peak2Bar, peak2Price, color=i_doubleTopColor, width=2)
+
+    // Draw neckline
+    if i_showNeckline
+        line.new(peak1Bar, doubleTopNeckline, bar_index + 20, doubleTopNeckline, color=i_necklineColor, width=2, style=line.style_dashed)
+
+    // Pattern info label
+    if i_showLabels
+        volDivText = i_useVolumeDivergence ? "\nVol Div: " + str.tostring(dtVolumeDivRatio, "#.##") + "x" : ""
+        label.new(peak2Bar, peak1Price * 1.02, "DOUBLE TOP" + volDivText + "\nGrade: " + dtGrade,
+                  style=label.style_label_down, color=i_doubleTopColor, textcolor=color.white, size=size.normal)
+
+// Draw Double Bottom pattern
+if dbPatternFormed and i_showPatternLines
+    // Draw trough labels
+    if i_showLabels
+        label.new(trough1Bar, trough1Price, "T1", style=label.style_circle, color=i_doubleBottomColor, textcolor=color.white, size=size.small)
+        label.new(trough2Bar, trough2Price, "T2", style=label.style_circle, color=i_doubleBottomColor, textcolor=color.white, size=size.small)
+
+    // Draw W shape lines
+    line.new(trough1Bar, trough1Price, dbPeakBar, dbPeakPrice, color=i_doubleBottomColor, width=2)
+    line.new(dbPeakBar, dbPeakPrice, trough2Bar, trough2Price, color=i_doubleBottomColor, width=2)
+
+    // Draw neckline
+    if i_showNeckline
+        line.new(trough1Bar, doubleBottomNeckline, bar_index + 20, doubleBottomNeckline, color=i_necklineColor, width=2, style=line.style_dashed)
+
+    // Pattern info label
+    if i_showLabels
+        volDivText = i_useVolumeDivergence ? "\nVol Div: " + str.tostring(dbVolumeDivRatio, "#.##") + "x" : ""
+        label.new(trough2Bar, trough1Price * 0.98, "DOUBLE BOTTOM" + volDivText + "\nGrade: " + dbGrade,
+                  style=label.style_label_up, color=i_doubleBottomColor, textcolor=color.white, size=size.normal)
+
+// Draw confirmation signals
+if doubleTopConfirmed and not doubleTopConfirmed[1] and i_showLabels
+    // Entry signal
+    label.new(bar_index, high, "SHORT", style=label.style_triangledown, color=i_doubleTopColor, textcolor=color.white, size=size.large)
+
+    // Target line
+    if i_showTargetLine
+        line.new(bar_index, doubleTopNeckline, bar_index + 30, doubleTopTarget, color=i_targetColor, width=2, style=line.style_dotted)
+        label.new(bar_index + 30, doubleTopTarget, "TARGET\n" + str.tostring(doubleTopTarget, "#.####"), color=i_targetColor, textcolor=color.white, size=size.small)
+
+if doubleBottomConfirmed and not doubleBottomConfirmed[1] and i_showLabels
+    // Entry signal
+    label.new(bar_index, low, "LONG", style=label.style_triangleup, color=i_doubleBottomColor, textcolor=color.white, size=size.large)
+
+    // Target line
+    if i_showTargetLine
+        line.new(bar_index, doubleBottomNeckline, bar_index + 30, doubleBottomTarget, color=i_targetColor, width=2, style=line.style_dotted)
+        label.new(bar_index + 30, doubleBottomTarget, "TARGET\n" + str.tostring(doubleBottomTarget, "#.####"), color=i_targetColor, textcolor=color.white, size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ DASHBOARD
+// ══════════════════════════════════════════════════════════════════════════════
+
+var table dashboard = table.new(position.top_right, 2, 10, bgcolor=color.new(color.black, 80), border_width=1, border_color=color.gray)
+
+if i_showDashboard and barstate.islast
+    // Header
+    headerColor = isDoubleTop ? i_doubleTopColor : (isDoubleBottom ? i_doubleBottomColor : color.gray)
+    table.cell(dashboard, 0, 0, "PATTERN STATUS", bgcolor=headerColor, text_color=color.white, text_halign=text.align_center)
+    table.cell(dashboard, 1, 0, "", bgcolor=headerColor)
+
+    if isDoubleTop or isDoubleBottom
+        patternType = isDoubleTop ? "DOUBLE TOP" : "DOUBLE BOTTOM"
+        patternColor = isDoubleTop ? i_doubleTopColor : i_doubleBottomColor
+
+        table.cell(dashboard, 0, 1, "Type:", text_color=color.white, text_halign=text.align_right)
+        table.cell(dashboard, 1, 1, patternType, text_color=patternColor, text_halign=text.align_left)
+
+        priceDiff = isDoubleTop ? dtPriceDiffPct : dbPriceDiffPct
+        table.cell(dashboard, 0, 2, "Price Diff:", text_color=color.white, text_halign=text.align_right)
+        table.cell(dashboard, 1, 2, str.tostring(priceDiff, "#.##") + "%", text_color=color.white, text_halign=text.align_left)
+
+        volDiv = isDoubleTop ? dtVolumeDivRatio : dbVolumeDivRatio
+        table.cell(dashboard, 0, 3, "Vol Div:", text_color=color.white, text_halign=text.align_right)
+        table.cell(dashboard, 1, 3, str.tostring(volDiv, "#.##") + "x", text_color=volDiv < i_volumeDivergenceThreshold ? color.green : color.orange, text_halign=text.align_left)
+
+        neckline = isDoubleTop ? doubleTopNeckline : doubleBottomNeckline
+        table.cell(dashboard, 0, 4, "Neckline:", text_color=color.white, text_halign=text.align_right)
+        table.cell(dashboard, 1, 4, str.tostring(neckline, "#.####"), text_color=i_necklineColor, text_halign=text.align_left)
+
+        target = isDoubleTop ? doubleTopTarget : doubleBottomTarget
+        table.cell(dashboard, 0, 5, "Target:", text_color=color.white, text_halign=text.align_right)
+        table.cell(dashboard, 1, 5, str.tostring(target, "#.####"), text_color=i_targetColor, text_halign=text.align_left)
+
+        rrRatio = isDoubleTop ? currentDTRR : currentDBRR
+        rrColor = not na(rrRatio) and rrRatio >= i_minRRRatio ? color.green : color.red
+        table.cell(dashboard, 0, 6, "R:R Ratio:", text_color=color.white, text_halign=text.align_right)
+        table.cell(dashboard, 1, 6, na(rrRatio) ? "N/A" : str.tostring(rrRatio, "#.##") + ":1", text_color=rrColor, text_halign=text.align_left)
+
+        strength = isDoubleTop ? dtStrength : dbStrength
+        grade = isDoubleTop ? dtGrade : dbGrade
+        table.cell(dashboard, 0, 7, "Strength:", text_color=color.white, text_halign=text.align_right)
+        table.cell(dashboard, 1, 7, str.tostring(strength, "#") + "% (" + grade + ")", text_color=color.white, text_halign=text.align_left)
+
+        confirmed = isDoubleTop ? doubleTopConfirmed : doubleBottomConfirmed
+        breakCount = isDoubleTop ? doubleTopBreakCount : doubleBottomBreakCount
+        statusText = confirmed ? "CONFIRMED" : "WAITING (" + str.tostring(breakCount) + "/" + str.tostring(i_necklineBreakConfirm) + ")"
+        statusColor = confirmed ? color.green : color.orange
+        table.cell(dashboard, 0, 8, "Status:", text_color=color.white, text_halign=text.align_right)
+        table.cell(dashboard, 1, 8, statusText, text_color=color.white, bgcolor=statusColor, text_halign=text.align_left)
+
+        // Statistics
+        totalPatterns = totalDoubleTopPatterns + totalDoubleBottomPatterns
+        confirmedPatterns = confirmedDoubleTopPatterns + confirmedDoubleBottomPatterns
+        table.cell(dashboard, 0, 9, "Stats:", text_color=color.white, text_halign=text.align_right)
+        table.cell(dashboard, 1, 9, str.tostring(confirmedPatterns) + "/" + str.tostring(totalPatterns) + " confirmed", text_color=color.white, text_halign=text.align_left)
+    else
+        table.cell(dashboard, 0, 1, "No Pattern", text_color=color.gray, text_halign=text.align_center)
+        table.cell(dashboard, 1, 1, "Detected", text_color=color.gray, text_halign=text.align_center)
+
+        // Clear remaining cells
+        for i = 2 to 9
+            table.cell(dashboard, 0, i, "", text_color=color.gray)
+            table.cell(dashboard, 1, i, "", text_color=color.gray)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Alert when Double Top forms
+if dtPatternFormed and i_alertOnPattern
+    alertMsg = "DOUBLE TOP FORMING!\n" +
+               "Peak1: " + str.tostring(peak1Price, "#.####") + "\n" +
+               "Peak2: " + str.tostring(peak2Price, "#.####") + "\n" +
+               "Vol Div: " + str.tostring(dtVolumeDivRatio, "#.##") + "x\n" +
+               "Neckline: " + str.tostring(doubleTopNeckline, "#.####") + "\n" +
+               "Watch for break!"
+    alert(alertMsg, alert.freq_once_per_bar)
+
+// Alert when Double Bottom forms
+if dbPatternFormed and i_alertOnPattern
+    alertMsg = "DOUBLE BOTTOM FORMING!\n" +
+               "Trough1: " + str.tostring(trough1Price, "#.####") + "\n" +
+               "Trough2: " + str.tostring(trough2Price, "#.####") + "\n" +
+               "Vol Div: " + str.tostring(dbVolumeDivRatio, "#.##") + "x\n" +
+               "Neckline: " + str.tostring(doubleBottomNeckline, "#.####") + "\n" +
+               "Watch for break!"
+    alert(alertMsg, alert.freq_once_per_bar)
+
+// Alert when Double Top confirmed
+if doubleTopConfirmed and not doubleTopConfirmed[1] and i_alertOnConfirm
+    alertMsg = "DOUBLE TOP CONFIRMED!\n" +
+               "SHORT Entry: " + str.tostring(close, "#.####") + "\n" +
+               "Stop: " + str.tostring(doubleTopStopLoss, "#.####") + "\n" +
+               "Target: " + str.tostring(doubleTopTarget, "#.####") + "\n" +
+               "R:R: " + str.tostring(currentDTRR, "#.##") + ":1"
+    alert(alertMsg, alert.freq_once_per_bar)
+
+// Alert when Double Bottom confirmed
+if doubleBottomConfirmed and not doubleBottomConfirmed[1] and i_alertOnConfirm
+    alertMsg = "DOUBLE BOTTOM CONFIRMED!\n" +
+               "LONG Entry: " + str.tostring(close, "#.####") + "\n" +
+               "Stop: " + str.tostring(doubleBottomStopLoss, "#.####") + "\n" +
+               "Target: " + str.tostring(doubleBottomTarget, "#.####") + "\n" +
+               "R:R: " + str.tostring(currentDBRR, "#.##") + ":1"
+    alert(alertMsg, alert.freq_once_per_bar)
+
+// Alert on invalidation
+if dtInvalidated and i_alertOnInvalidation
+    alert("Double Top INVALIDATED - Price broke above Peak2", alert.freq_once_per_bar)
+
+if dbInvalidated and i_alertOnInvalidation
+    alert("Double Bottom INVALIDATED - Price broke below Trough2", alert.freq_once_per_bar)
+
+// Alert on false break
+if dtFalseBreak and i_alertOnInvalidation
+    alert("False breakdown! Price returned above neckline", alert.freq_once_per_bar)
+
+if dbFalseBreak and i_alertOnInvalidation
+    alert("False breakout! Price returned below neckline", alert.freq_once_per_bar)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██ PLOT SIGNALS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Plot entry signals for strategy backtesting
+plotshape(doubleTopConfirmed and not doubleTopConfirmed[1], "Short Signal", shape.triangledown, location.abovebar, i_doubleTopColor, size=size.small)
+plotshape(doubleBottomConfirmed and not doubleBottomConfirmed[1], "Long Signal", shape.triangleup, location.belowbar, i_doubleBottomColor, size=size.small)
+
+// Plot neckline levels
+plot(isDoubleTop ? doubleTopNeckline : na, "DT Neckline", i_necklineColor, 1, plot.style_circles)
+plot(isDoubleBottom ? doubleBottomNeckline : na, "DB Neckline", i_necklineColor, 1, plot.style_circles)
+
+// Background color when pattern is confirmed
+bgcolor(doubleTopConfirmed ? color.new(i_doubleTopColor, 90) : na, title="DT Confirmed BG")
+bgcolor(doubleBottomConfirmed ? color.new(i_doubleBottomColor, 90) : na, title="DB Confirmed BG")

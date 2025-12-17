@@ -1,0 +1,382 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TrendStructureAnalyzer
+
+//@version=6
+indicator("Trend Structure Analyzer (HH-HL / LL-LH)", shorttitle="TSA", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=100)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Pivot Settings
+pivot_length_left = input.int(5, "Pivot Left Length", minval=1, maxval=50, group="Pivot Settings")
+pivot_length_right = input.int(5, "Pivot Right Length", minval=1, maxval=50, group="Pivot Settings")
+min_pivot_distance = input.int(10, "Min Pivot Distance", minval=1, maxval=100, tooltip="Minimum bars between pivots", group="Pivot Settings")
+
+// Volume Settings
+volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=100, group="Volume Settings")
+show_volume_divergence = input.bool(true, "Show Volume Divergence", group="Volume Settings")
+
+// Entry Settings
+pullback_tolerance = input.float(2.0, "Pullback Tolerance %", minval=0.1, maxval=10.0, step=0.1, group="Entry Settings")
+stop_buffer = input.float(2.0, "Stop Loss Buffer %", minval=0.1, maxval=10.0, step=0.1, group="Entry Settings")
+
+// Display Settings
+show_pivot_circles = input.bool(true, "Show Pivot Circles", group="Display Settings")
+show_pivot_lines = input.bool(true, "Show Pivot Lines", group="Display Settings")
+show_pivot_labels = input.bool(true, "Show Pivot Labels", group="Display Settings")
+show_trend_box = input.bool(true, "Show Trend Zone Box", group="Display Settings")
+show_entry_arrows = input.bool(true, "Show Entry Arrows", group="Display Settings")
+show_status_table = input.bool(true, "Show Status Table", group="Display Settings")
+
+// Colors
+color_uptrend = input.color(color.new(color.green, 80), "Uptrend Zone Color", group="Colors")
+color_downtrend = input.color(color.new(color.red, 80), "Downtrend Zone Color", group="Colors")
+color_hh = input.color(color.green, "Higher High Color", group="Colors")
+color_hl = input.color(color.lime, "Higher Low Color", group="Colors")
+color_ll = input.color(color.red, "Lower Low Color", group="Colors")
+color_lh = input.color(color.orange, "Lower High Color", group="Colors")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VARIABLES
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Pivot storage arrays
+var float[] pivot_highs = array.new_float(10, na)
+var int[] pivot_high_bars = array.new_int(10, 0)
+var float[] pivot_lows = array.new_float(10, na)
+var int[] pivot_low_bars = array.new_int(10, 0)
+
+// Track last pivot bar index for min distance check
+var int last_pivot_high_bar = 0
+var int last_pivot_low_bar = 0
+
+// Trend state
+var string trend_structure = "SIDEWAYS"
+var int sideways_count = 0
+
+// Entry tracking
+var bool long_entry_triggered = false
+var bool short_entry_triggered = false
+var float entry_price = na
+var float stop_price = na
+var float target_price = na
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get array value safely
+get_array_float(float[] arr, int idx) =>
+    result = na(arr) or array.size(arr) <= idx ? na : array.get(arr, idx)
+
+get_array_int(int[] arr, int idx) =>
+    result = na(arr) or array.size(arr) <= idx ? 0 : array.get(arr, idx)
+
+// Check if price has a gap > threshold
+is_large_gap(float threshold_pct) =>
+    gap_up = low > high[1] * (1 + threshold_pct / 100)
+    gap_down = high < low[1] * (1 - threshold_pct / 100)
+    gap_up or gap_down
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 1: IDENTIFY PIVOTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Detect pivots
+pivot_high_val = ta.pivothigh(high, pivot_length_left, pivot_length_right)
+pivot_low_val = ta.pivotlow(low, pivot_length_left, pivot_length_right)
+
+// Check for large gap (>5%) - skip as pivot
+has_gap = is_large_gap(5.0)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 2: STORE PIVOT VALUES
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Pivot offset (pivots are confirmed after pivot_length_right bars)
+pivot_offset = pivot_length_right
+
+// Store new pivot high
+new_pivot_high = false
+if not na(pivot_high_val) and not has_gap[pivot_offset]
+    // Check minimum distance
+    if bar_index - pivot_offset - last_pivot_high_bar >= min_pivot_distance or last_pivot_high_bar == 0
+        // Shift array and add new value at the beginning
+        array.pop(pivot_highs)
+        array.unshift(pivot_highs, pivot_high_val)
+        array.pop(pivot_high_bars)
+        array.unshift(pivot_high_bars, bar_index - pivot_offset)
+        last_pivot_high_bar := bar_index - pivot_offset
+        new_pivot_high := true
+
+// Store new pivot low
+new_pivot_low = false
+if not na(pivot_low_val) and not has_gap[pivot_offset]
+    // Check minimum distance
+    if bar_index - pivot_offset - last_pivot_low_bar >= min_pivot_distance or last_pivot_low_bar == 0
+        // Shift array and add new value at the beginning
+        array.pop(pivot_lows)
+        array.unshift(pivot_lows, pivot_low_val)
+        array.pop(pivot_low_bars)
+        array.unshift(pivot_low_bars, bar_index - pivot_offset)
+        last_pivot_low_bar := bar_index - pivot_offset
+        new_pivot_low := true
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 3: ANALYZE TREND STRUCTURE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get latest and previous pivots
+latest_high = get_array_float(pivot_highs, 0)
+previous_high = get_array_float(pivot_highs, 1)
+latest_high_bar = get_array_int(pivot_high_bars, 0)
+previous_high_bar = get_array_int(pivot_high_bars, 1)
+
+latest_low = get_array_float(pivot_lows, 0)
+previous_low = get_array_float(pivot_lows, 1)
+latest_low_bar = get_array_int(pivot_low_bars, 0)
+previous_low_bar = get_array_int(pivot_low_bars, 1)
+
+// Check if we have sufficient data
+has_sufficient_data = not na(latest_high) and not na(previous_high) and not na(latest_low) and not na(previous_low)
+
+// Determine structure
+is_higher_high = has_sufficient_data and latest_high > previous_high
+is_higher_low = has_sufficient_data and latest_low > previous_low
+is_lower_low = has_sufficient_data and latest_low < previous_low
+is_lower_high = has_sufficient_data and latest_high < previous_high
+
+// Update trend structure
+prev_trend = trend_structure
+if has_sufficient_data
+    if is_higher_high and is_higher_low
+        trend_structure := "UPTREND"
+        sideways_count := 0
+    else if is_lower_low and is_lower_high
+        trend_structure := "DOWNTREND"
+        sideways_count := 0
+    else
+        trend_structure := "SIDEWAYS"
+        sideways_count += 1
+else
+    trend_structure := "INSUFFICIENT"
+    sideways_count := 0
+
+// Reset if sideways too long
+if sideways_count > 50
+    sideways_count := 0
+
+// Detect trend change
+trend_changed_to_up = trend_structure == "UPTREND" and prev_trend != "UPTREND"
+trend_changed_to_down = trend_structure == "DOWNTREND" and prev_trend != "DOWNTREND"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 4: VOLUME CONFIRMATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+volume_ma = ta.sma(volume, volume_ma_length)
+
+// Calculate volume at pivots
+bars_since_latest_high = bar_index - latest_high_bar
+bars_since_previous_high = bar_index - previous_high_bar
+bars_since_latest_low = bar_index - latest_low_bar
+bars_since_previous_low = bar_index - previous_low_bar
+
+// Get volume at pivot high locations (safely)
+volume_at_latest_high = bars_since_latest_high >= 0 and bars_since_latest_high < bar_index ? volume[bars_since_latest_high] : na
+volume_at_previous_high = bars_since_previous_high >= 0 and bars_since_previous_high < bar_index ? volume[bars_since_previous_high] : na
+
+// Volume analysis
+volume_increasing_at_high = not na(volume_at_latest_high) and not na(volume_at_previous_high) and volume_at_latest_high > volume_at_previous_high
+
+// Bearish divergence: Price making HH but volume decreasing
+has_bearish_divergence = is_higher_high and not volume_increasing_at_high and show_volume_divergence
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 5: ENTRY/EXIT CONDITIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// LONG Entry Conditions (Buy at Higher Low zone)
+pullback_upper = latest_low * (1 + pullback_tolerance / 100)
+long_entry_zone = trend_structure == "UPTREND" and close <= pullback_upper and close > latest_low and volume < volume_ma
+
+// SHORT Entry Conditions (Sell at Lower High zone)
+pullback_lower = latest_high * (1 - pullback_tolerance / 100)
+short_entry_zone = trend_structure == "DOWNTREND" and close >= pullback_lower and close < latest_high and volume < volume_ma
+
+// Calculate entry signals (only trigger once per setup)
+long_signal = long_entry_zone and not long_entry_triggered
+short_signal = short_entry_zone and not short_entry_triggered
+
+// Track entries
+if long_signal
+    long_entry_triggered := true
+    entry_price := close
+    stop_price := latest_low * (1 - stop_buffer / 100)
+    target_price := latest_high + (latest_high - latest_low)
+
+if short_signal
+    short_entry_triggered := true
+    entry_price := close
+    stop_price := latest_high * (1 + stop_buffer / 100)
+    target_price := latest_low - (latest_high - latest_low)
+
+// Reset entry flags when new pivot forms or structure changes
+if new_pivot_high or new_pivot_low
+    long_entry_triggered := false
+    short_entry_triggered := false
+
+// EXIT Conditions
+exit_long = trend_structure == "UPTREND" and close < latest_low
+exit_short = trend_structure == "DOWNTREND" and close > latest_high
+
+// Structure broken
+structure_broken_long = prev_trend == "UPTREND" and close < latest_low
+structure_broken_short = prev_trend == "DOWNTREND" and close > latest_high
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 6: VISUALIZATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// --- Pivot Circles ---
+if show_pivot_circles and new_pivot_high
+    pivot_bar = bar_index - pivot_offset
+    label.new(pivot_bar, pivot_high_val, "●", style=label.style_none, textcolor=is_higher_high ? color_hh : color_lh, size=size.small, yloc=yloc.abovebar)
+
+if show_pivot_circles and new_pivot_low
+    pivot_bar = bar_index - pivot_offset
+    label.new(pivot_bar, pivot_low_val, "●", style=label.style_none, textcolor=is_higher_low ? color_hl : color_ll, size=size.small, yloc=yloc.belowbar)
+
+// --- Pivot Labels ---
+if show_pivot_labels and new_pivot_high
+    pivot_bar = bar_index - pivot_offset
+    label_text = is_higher_high ? "HH" : "LH"
+    label_color = is_higher_high ? color_hh : color_lh
+    label.new(pivot_bar, pivot_high_val, label_text, style=label.style_label_down, color=color.new(label_color, 70), textcolor=label_color, size=size.tiny)
+
+if show_pivot_labels and new_pivot_low
+    pivot_bar = bar_index - pivot_offset
+    label_text = is_higher_low ? "HL" : "LL"
+    label_color = is_higher_low ? color_hl : color_ll
+    label.new(pivot_bar, pivot_low_val, label_text, style=label.style_label_up, color=color.new(label_color, 70), textcolor=label_color, size=size.tiny)
+
+// --- Pivot Lines ---
+// Connect pivot highs
+if show_pivot_lines and new_pivot_high and previous_high_bar > 0
+    line_color = is_higher_high ? color_hh : color_lh
+    line_style = line.style_solid
+    line.new(previous_high_bar, previous_high, latest_high_bar, latest_high, color=line_color, style=line_style, width=2)
+
+// Connect pivot lows
+if show_pivot_lines and new_pivot_low and previous_low_bar > 0
+    line_color = is_higher_low ? color_hl : color_ll
+    line_style = line.style_dashed
+    line.new(previous_low_bar, previous_low, latest_low_bar, latest_low, color=line_color, style=line_style, width=2)
+
+// --- Trend Zone Box ---
+var box trend_box = na
+if show_trend_box and has_sufficient_data
+    // Delete previous box
+    if not na(trend_box)
+        box.delete(trend_box)
+
+    // Draw new box based on trend
+    box_color = trend_structure == "UPTREND" ? color_uptrend : trend_structure == "DOWNTREND" ? color_downtrend : color.new(color.gray, 90)
+    box_left = math.max(latest_high_bar, latest_low_bar, previous_high_bar, previous_low_bar)
+    box_left := math.max(box_left, bar_index - 50)
+    box_right = bar_index + 5
+    box_top = math.max(latest_high, previous_high)
+    box_bottom = math.min(latest_low, previous_low)
+
+    if trend_structure != "INSUFFICIENT" and trend_structure != "SIDEWAYS"
+        trend_box := box.new(box_left, box_top, box_right, box_bottom, border_color=color.new(box_color, 50), bgcolor=box_color, border_width=1)
+
+// --- Entry Arrows ---
+if show_entry_arrows and long_signal
+    label.new(bar_index, low, "▲", style=label.style_none, textcolor=color_hh, size=size.large, yloc=yloc.belowbar)
+    label.new(bar_index, low, "LONG", style=label.style_label_up, color=color.new(color_hh, 80), textcolor=color_hh, size=size.tiny)
+
+if show_entry_arrows and short_signal
+    label.new(bar_index, high, "▼", style=label.style_none, textcolor=color_ll, size=size.large, yloc=yloc.abovebar)
+    label.new(bar_index, high, "SHORT", style=label.style_label_down, color=color.new(color_ll, 80), textcolor=color_ll, size=size.tiny)
+
+// --- Divergence Warning ---
+if has_bearish_divergence and new_pivot_high
+    pivot_bar = bar_index - pivot_offset
+    label.new(pivot_bar, pivot_high_val * 1.01, "⚠ DIV", style=label.style_label_down, color=color.new(color.orange, 50), textcolor=color.orange, size=size.tiny)
+
+// --- Status Table ---
+var table status_table = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 80), border_width=1)
+
+if show_status_table and barstate.islast
+    // Header
+    table.cell(status_table, 0, 0, "Trend Structure", text_color=color.white, text_size=size.small)
+    table.cell(status_table, 1, 0, trend_structure, text_color=trend_structure == "UPTREND" ? color_hh : trend_structure == "DOWNTREND" ? color_ll : color.gray, text_size=size.small)
+
+    // Latest High
+    table.cell(status_table, 0, 1, "Latest High", text_color=color.white, text_size=size.tiny)
+    table.cell(status_table, 1, 1, str.tostring(latest_high, format.mintick), text_color=is_higher_high ? color_hh : color_lh, text_size=size.tiny)
+
+    // Previous High
+    table.cell(status_table, 0, 2, "Previous High", text_color=color.white, text_size=size.tiny)
+    table.cell(status_table, 1, 2, str.tostring(previous_high, format.mintick), text_color=color.gray, text_size=size.tiny)
+
+    // Latest Low
+    table.cell(status_table, 0, 3, "Latest Low", text_color=color.white, text_size=size.tiny)
+    table.cell(status_table, 1, 3, str.tostring(latest_low, format.mintick), text_color=is_higher_low ? color_hl : color_ll, text_size=size.tiny)
+
+    // Previous Low
+    table.cell(status_table, 0, 4, "Previous Low", text_color=color.white, text_size=size.tiny)
+    table.cell(status_table, 1, 4, str.tostring(previous_low, format.mintick), text_color=color.gray, text_size=size.tiny)
+
+    // Structure Type
+    hh_hl_text = is_higher_high ? "HH" : "LH"
+    ll_hl_text = is_higher_low ? "HL" : "LL"
+    table.cell(status_table, 0, 5, "Structure", text_color=color.white, text_size=size.tiny)
+    table.cell(status_table, 1, 5, hh_hl_text + " / " + ll_hl_text, text_color=color.white, text_size=size.tiny)
+
+    // Volume Status
+    vol_status = volume_increasing_at_high ? "Healthy" : "Divergence"
+    vol_color = volume_increasing_at_high ? color_hh : color.orange
+    table.cell(status_table, 0, 6, "Volume", text_color=color.white, text_size=size.tiny)
+    table.cell(status_table, 1, 6, vol_status, text_color=vol_color, text_size=size.tiny)
+
+    // Entry Zone
+    entry_status = long_entry_zone ? "LONG Zone" : short_entry_zone ? "SHORT Zone" : "No Signal"
+    entry_color = long_entry_zone ? color_hh : short_entry_zone ? color_ll : color.gray
+    table.cell(status_table, 0, 7, "Entry", text_color=color.white, text_size=size.tiny)
+    table.cell(status_table, 1, 7, entry_status, text_color=entry_color, text_size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STEP 7: ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Trend confirmation alerts
+alertcondition(trend_changed_to_up, title="Uptrend Confirmed", message="📈 UPTREND confirmed! HH: {{plot_0}}, HL: {{plot_1}}")
+alertcondition(trend_changed_to_down, title="Downtrend Confirmed", message="📉 DOWNTREND confirmed! LL: {{plot_0}}, LH: {{plot_1}}")
+
+// Entry alerts
+alertcondition(long_signal, title="Long Entry Opportunity", message="🎯 LONG Entry opportunity at HL zone: {{close}}")
+alertcondition(short_signal, title="Short Entry Opportunity", message="🎯 SHORT Entry opportunity at LH zone: {{close}}")
+
+// Divergence alert
+alertcondition(has_bearish_divergence and new_pivot_high, title="Bearish Divergence", message="⚠️ DIVERGENCE: Price HH but Volume decreasing")
+
+// Structure broken alerts
+alertcondition(structure_broken_long, title="Uptrend Structure Broken", message="🚨 STRUCTURE BROKEN: Uptrend invalidated - Price closed below HL")
+alertcondition(structure_broken_short, title="Downtrend Structure Broken", message="🚨 STRUCTURE BROKEN: Downtrend invalidated - Price closed above LH")
+
+// Exit alerts
+alertcondition(exit_long, title="Exit Long", message="Exit Long: Structure Broken")
+alertcondition(exit_short, title="Exit Short", message="Exit Short: Structure Broken")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PLOTS (for alert messages)
+// ══════════════════════════════════════════════════════════════════════════════
+
+plot(latest_high, title="Latest High", display=display.none)
+plot(latest_low, title="Latest Low", display=display.none)
+
+// Background color based on trend
+bgcolor(trend_structure == "UPTREND" ? color.new(color_hh, 95) : trend_structure == "DOWNTREND" ? color.new(color_ll, 95) : na, title="Trend Background")

@@ -2,45 +2,44 @@
 // © pmbibe
 
 //@version=6
-indicator("Adaptive Compression Zone Breakout Detector v2.0", shorttitle="CompressionZone", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+indicator("Compression Zone Breakout Detector v2.0", shorttitle="CompressionZone", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // INPUTS
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Core Parameters
-compression_length = input.int(15, "Compression Length", minval=5, maxval=50, tooltip="Minimum bars for valid compression zone")
-atr_period = input.int(14, "ATR Period", minval=5, maxval=50, tooltip="Period for ATR calculation")
-range_atr_mult = input.float(1.5, "Range ATR Multiplier", minval=0.5, maxval=3.0, step=0.1, tooltip="Zone width <= ATR * this multiplier")
+// Zone Detection
+compression_length = input.int(15, "Compression Length", minval=5, maxval=50, tooltip="Minimum bars to form valid compression zone", group="Zone Detection")
+atr_period = input.int(14, "ATR Period", minval=5, maxval=50, tooltip="Period for dynamic range threshold calculation", group="Zone Detection")
+range_atr_mult = input.float(1.5, "Range ATR Multiplier", minval=0.5, maxval=3.0, step=0.1, tooltip="Zone width <= ATR * this multiplier", group="Zone Detection")
 
-// Volume Confirmation
-volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=50)
-volume_spike_min = input.float(2.0, "Min Volume Spike", minval=1.0, maxval=5.0, step=0.1, tooltip="Minimum volume ratio for confirmation")
-volume_spike_strong = input.float(4.0, "Strong Volume Spike", minval=2.0, maxval=10.0, step=0.5, tooltip="Volume ratio for strong signal")
-
-// Momentum Filter
-rsi_period = input.int(14, "RSI Period", minval=5, maxval=30)
-rsi_ob = input.int(70, "RSI Overbought", minval=60, maxval=90, tooltip="Filter long entries above this level")
-rsi_os = input.int(30, "RSI Oversold", minval=10, maxval=40, tooltip="Filter short entries below this level")
+// Volume
+volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=50, group="Volume")
+volume_spike_mult = input.float(2.5, "Volume Spike Multiplier", minval=1.5, maxval=5.0, step=0.1, tooltip="Volume ratio required for confirmation", group="Volume")
 
 // Breakout Confirmation
-close_outside_bars = input.int(2, "Close Outside Bars", minval=1, maxval=5, tooltip="Number of bars closing outside zone to confirm")
-pullback_allowed = input.bool(true, "Allow Retest Entry", tooltip="Enable secondary entry on zone retest")
+confirm_bars = input.int(2, "Confirmation Bars", minval=1, maxval=5, tooltip="Number of bars closing outside zone to confirm", group="Breakout Confirmation")
+min_body_ratio = input.float(0.4, "Min Body Ratio", minval=0.2, maxval=0.7, step=0.05, tooltip="Filter out doji/wick breakouts", group="Breakout Confirmation")
 
 // Risk Management
-atr_sl_mult = input.float(1.5, "ATR SL Multiplier", minval=0.5, maxval=3.0, step=0.1, tooltip="Stop loss = ATR * this multiplier")
-rr_ratio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, maxval=5.0, step=0.5, tooltip="Take profit based on R:R ratio")
+sl_atr_mult = input.float(1.0, "SL ATR Multiplier", minval=0.5, maxval=3.0, step=0.1, tooltip="Stop loss = zone edge ± ATR * mult", group="Risk Management")
+tp_rr_ratio = input.float(2.0, "Take Profit R:R", minval=1.0, maxval=5.0, step=0.5, tooltip="Take profit based on risk:reward ratio", group="Risk Management")
+
+// History Display
+show_history = input.bool(true, "Show Zone History", tooltip="Display historical compression zones", group="History")
+max_history_zones = input.int(10, "Max History Zones", minval=1, maxval=50, tooltip="Maximum number of historical zones to display", group="History")
+history_days = input.int(7, "History Days", minval=1, maxval=30, tooltip="Show zones from last X days", group="History")
 
 // Edge Case Filters
-signal_cooldown = input.int(5, "Signal Cooldown (bars)", minval=1, maxval=20, tooltip="Minimum bars between signals")
-max_compression_bars = input.int(50, "Max Compression Bars", minval=30, maxval=100, tooltip="Reset zone if exceeds this")
-min_body_ratio = input.float(0.3, "Min Body Ratio", minval=0.1, maxval=0.5, step=0.05, tooltip="Filter doji/spinning tops")
+signal_cooldown = input.int(5, "Signal Cooldown (bars)", minval=1, maxval=20, tooltip="Minimum bars between signals", group="Filters")
+max_zone_bars = input.int(50, "Max Zone Bars", minval=30, maxval=100, tooltip="Reset zone if exceeds this length (stale zone)", group="Filters")
 
 // Visual Settings
-show_zones = input.bool(true, "Show Compression Zones", group="Visualization")
+show_current_zone = input.bool(true, "Show Current Zone", group="Visualization")
 show_sl_tp = input.bool(true, "Show SL/TP Lines", group="Visualization")
 show_dashboard = input.bool(true, "Show Dashboard", group="Visualization")
 show_labels = input.bool(true, "Show Signal Labels", group="Visualization")
+show_stats = input.bool(true, "Show Statistics Table", group="Visualization")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // CALCULATIONS
@@ -49,122 +48,108 @@ show_labels = input.bool(true, "Show Signal Labels", group="Visualization")
 // Step 1: Dynamic Range Threshold
 atr = ta.atr(atr_period)
 atr_pct = atr / close * 100
-dynamic_range_threshold = atr_pct * range_atr_mult
+dynamic_threshold = atr_pct * range_atr_mult
 
 // Step 2: Compression Zone Detection
-highest_N = ta.highest(high, compression_length)
-lowest_N = ta.lowest(low, compression_length)
-zone_mid = (highest_N + lowest_N) / 2
+zone_high = ta.highest(high, compression_length)
+zone_low = ta.lowest(low, compression_length)
+zone_range_pct = (zone_high - zone_low) / zone_low * 100
 
-// Calculate actual range percentage
-range_pct = (highest_N - lowest_N) / lowest_N * 100
-
-// Compression detection with adaptive threshold
-is_tight_range = range_pct < dynamic_range_threshold
+// Check if currently in compression
+is_compressed = zone_range_pct <= dynamic_threshold
 
 // Count bars in compression
-var int compression_bars = 0
-if is_tight_range
-    compression_bars := compression_bars + 1
+var int compression_count = 0
+if is_compressed
+    compression_count := compression_count + 1
 else
-    compression_bars := 0
+    compression_count := 0
 
-// Reset if zone is too old (stale zone)
-if compression_bars > max_compression_bars
-    compression_bars := 0
+// Reset if zone is stale
+if compression_count > max_zone_bars
+    compression_count := 0
 
-// Valid compression zone (sufficient length)
-is_valid_compression = compression_bars >= compression_length
+// Valid zone when enough bars accumulated
+is_valid_zone = compression_count >= compression_length
 
-// Step 3: Volume Analysis
-volume_sma = ta.sma(volume, volume_ma_length)
-volume_ratio = volume / volume_sma
+// Step 3: Volume Analysis (Pure)
+vol_ma = ta.sma(volume, volume_ma_length)
+vol_ratio = volume / vol_ma
 
-// Volume trend in compression (accumulation/distribution)
-vol_in_zone = ta.sma(volume, compression_length)
-vol_before_zone = ta.sma(volume[compression_length], compression_length)
-volume_building = vol_in_zone > vol_before_zone * 1.2
+// Volume accumulation check (volume in zone vs before zone)
+vol_in_zone = ta.sma(volume, math.min(compression_count > 0 ? compression_count : 1, compression_length))
+vol_before = ta.sma(volume[compression_length], compression_length)
+is_accumulating = vol_in_zone > vol_before
 
-// Spike detection
-is_volume_spike = volume_ratio >= volume_spike_min
-is_strong_spike = volume_ratio >= volume_spike_strong
+// Volume spike detection
+is_volume_spike = vol_ratio >= volume_spike_mult
+is_strong_spike = vol_ratio >= volume_spike_mult * 1.5
 
-// Step 4: Momentum Filter
-rsi = ta.rsi(close, rsi_period)
-ema_fast = ta.ema(close, 8)
-ema_slow = ta.ema(close, 21)
+// Step 4: Price Action Breakout
+// Raw breakout detection using previous bar's levels
+price_break_up = close > zone_high[1]
+price_break_down = close < zone_low[1]
 
-// Momentum alignment
-bullish_momentum = ema_fast > ema_slow and rsi > 50 and rsi < rsi_ob
-bearish_momentum = ema_fast < ema_slow and rsi < 50 and rsi > rsi_os
+// Body ratio filter (reject doji/wick breakouts)
+candle_body = math.abs(close - open)
+candle_range = high - low
+body_ratio = candle_range > 0 ? candle_body / candle_range : 0
+is_strong_candle = body_ratio >= min_body_ratio
 
-// Divergence check (bullish divergence)
-price_higher_low = low > ta.lowest(low, compression_length)
-rsi_higher_low = rsi > ta.lowest(rsi, compression_length)
-bullish_divergence = not price_higher_low and rsi_higher_low
-
-// Step 5: Breakout Detection
-// Raw breakout signals - using previous bar's levels to avoid lookahead
-raw_breakout_up = close > highest_N[1]
-raw_breakdown = close < lowest_N[1]
+// Breakout candle size check
+breakout_size = candle_body / atr
+is_significant_move = breakout_size >= 0.5
 
 // Confirmation counter
-var int confirm_up = 0
-var int confirm_down = 0
+var int up_confirms = 0
+var int down_confirms = 0
 
-if raw_breakout_up and close > highest_N[1]
-    confirm_up := confirm_up + 1
-else if close < highest_N[1]
-    confirm_up := 0
+if price_break_up and close > zone_high[1]
+    up_confirms := up_confirms + 1
+else
+    up_confirms := 0
 
-if raw_breakdown and close < lowest_N[1]
-    confirm_down := confirm_down + 1
-else if close > lowest_N[1]
-    confirm_down := 0
+if price_break_down and close < zone_low[1]
+    down_confirms := down_confirms + 1
+else
+    down_confirms := 0
 
-// Confirmed breakout (N bars close outside zone)
-confirmed_breakout_up = confirm_up >= close_outside_bars
-confirmed_breakdown = confirm_down >= close_outside_bars
-
-// Body ratio filter (avoid doji/spinning top fake breakouts)
-body_size = math.abs(close - open)
-candle_range = high - low
-body_ratio = candle_range > 0 ? body_size / candle_range : 0
-valid_body = body_ratio >= min_body_ratio
+// Minimum data check
+has_enough_data = bar_index >= compression_length + atr_period
 
 // Gap filter
-gap_threshold = atr * 2
-has_gap = math.abs(open - close[1]) > gap_threshold
+gap = math.abs(open - close[1])
+has_gap = gap > atr * 1.5
 
-// Minimum bars check
-has_enough_data = bar_index >= compression_length + atr_period
+// Weak breakout filter
+is_weak_breakout = candle_body < atr * 0.3
 
 // Signal cooldown
 var int last_signal_bar = 0
 cooldown_ok = bar_index - last_signal_bar >= signal_cooldown
 
-// Full breakout signals with all confirmations
-breakout_up_raw = confirmed_breakout_up and
-                  is_valid_compression[close_outside_bars] and
+// Step 5: Final Signals
+breakout_up_raw = up_confirms >= confirm_bars and
+                  is_valid_zone[confirm_bars] and
                   is_volume_spike and
-                  (bullish_momentum or bullish_divergence) and
-                  valid_body and
+                  is_strong_candle and
+                  is_significant_move and
                   not has_gap and
+                  not is_weak_breakout and
                   has_enough_data and
-                  cooldown_ok and
-                  rsi < rsi_ob
+                  cooldown_ok
 
-breakdown_raw = confirmed_breakdown and
-                is_valid_compression[close_outside_bars] and
+breakdown_raw = down_confirms >= confirm_bars and
+                is_valid_zone[confirm_bars] and
                 is_volume_spike and
-                bearish_momentum and
-                valid_body and
+                is_strong_candle and
+                is_significant_move and
                 not has_gap and
+                not is_weak_breakout and
                 has_enough_data and
-                cooldown_ok and
-                rsi > rsi_os
+                cooldown_ok
 
-// Apply signals and update cooldown
+// Apply signals
 var bool breakout_up = false
 var bool breakdown = false
 
@@ -174,256 +159,294 @@ breakdown := breakdown_raw
 if breakout_up or breakdown
     last_signal_bar := bar_index
 
-// Step 6: Retest Entry Logic
-var float breakout_level_up = na
-var float breakout_level_down = na
-var int breakout_bar_up = na
-var int breakout_bar_down = na
-
-// Store breakout levels
-if breakout_up[1] and na(breakout_level_up)
-    breakout_level_up := highest_N[close_outside_bars + 1]
-    breakout_bar_up := bar_index
-
-if breakdown[1] and na(breakout_level_down)
-    breakout_level_down := lowest_N[close_outside_bars + 1]
-    breakout_bar_down := bar_index
-
-// Clear stale levels (after 10 bars)
-if not na(breakout_level_up) and bar_index - breakout_bar_up > 10
-    breakout_level_up := na
-    breakout_bar_up := na
-
-if not na(breakout_level_down) and bar_index - breakout_bar_down > 10
-    breakout_level_down := na
-    breakout_bar_down := na
-
-// Retest signals
-retest_long = pullback_allowed and
-              not na(breakout_level_up) and
-              low <= breakout_level_up and
-              close > breakout_level_up and
-              bar_index - breakout_bar_up <= 10 and
-              bar_index - breakout_bar_up >= 1
-
-retest_short = pullback_allowed and
-               not na(breakout_level_down) and
-               high >= breakout_level_down and
-               close < breakout_level_down and
-               bar_index - breakout_bar_down <= 10 and
-               bar_index - breakout_bar_down >= 1
-
-// Clear level after retest triggered
-if retest_long
-    breakout_level_up := na
-    breakout_bar_up := na
-
-if retest_short
-    breakout_level_down := na
-    breakout_bar_down := na
+// Signal strength
+signal_strength = is_strong_spike ? "STRONG" : "NORMAL"
 
 // ══════════════════════════════════════════════════════════════════════════════
 // RISK CALCULATIONS
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Calculate SL/TP for breakout signals
-var float long_sl = na
-var float long_tp = na
-var float short_sl = na
-var float short_tp = na
-var string signal_strength = na
+var float stop_loss = na
+var float take_profit = na
+var float entry_price = na
 
 // Long breakout
 if breakout_up
-    long_sl := lowest_N[close_outside_bars] - atr * atr_sl_mult
-    long_risk = close - long_sl
-    long_tp := close + long_risk * rr_ratio
-    signal_strength := is_strong_spike ? "STRONG" : "NORMAL"
+    entry_price := close
+    stop_loss := zone_low[confirm_bars] - atr * sl_atr_mult
+    risk = entry_price - stop_loss
+    take_profit := entry_price + risk * tp_rr_ratio
 
 // Short breakdown
 if breakdown
-    short_sl := highest_N[close_outside_bars] + atr * atr_sl_mult
-    short_risk = short_sl - close
-    short_tp := close - short_risk * rr_ratio
-    signal_strength := is_strong_spike ? "STRONG" : "NORMAL"
+    entry_price := close
+    stop_loss := zone_high[confirm_bars] + atr * sl_atr_mult
+    risk = stop_loss - entry_price
+    take_profit := entry_price - risk * tp_rr_ratio
 
-// Retest SL/TP
-var float retest_long_sl = na
-var float retest_long_tp = na
-var float retest_short_sl = na
-var float retest_short_tp = na
+// ══════════════════════════════════════════════════════════════════════════════
+// ZONE HISTORY TRACKING
+// ══════════════════════════════════════════════════════════════════════════════
 
-if retest_long
-    retest_long_sl := breakout_level_up - atr * atr_sl_mult
-    retest_risk = close - retest_long_sl
-    retest_long_tp := close + retest_risk * rr_ratio
+// Arrays to store zone history
+var array<box> zone_history = array.new<box>()
+var array<int> zone_bar_start = array.new<int>()
+var array<int> zone_bar_end = array.new<int>()
+var array<float> zone_high_hist = array.new<float>()
+var array<float> zone_low_hist = array.new<float>()
+var array<string> zone_result = array.new<string>()
 
-if retest_short
-    retest_short_sl := breakout_level_down + atr * atr_sl_mult
-    retest_risk = retest_short_sl - close
-    retest_short_tp := close - retest_risk * rr_ratio
+// Track current zone state
+var bool was_in_zone = false
+var int zone_start_bar = 0
+var float current_zone_high = na
+var float current_zone_low = na
+
+// Detect new zone forming
+if is_valid_zone and not was_in_zone
+    zone_start_bar := bar_index - compression_length
+    current_zone_high := zone_high
+    current_zone_low := zone_low
+    was_in_zone := true
+
+// Update zone boundaries while in zone
+if was_in_zone and is_valid_zone
+    current_zone_high := zone_high
+    current_zone_low := zone_low
+
+// Detect zone end (breakout or invalidation)
+zone_ended = was_in_zone and (breakout_up or breakdown or (not is_compressed and not is_valid_zone))
+
+if zone_ended
+    // Determine result
+    result = breakout_up ? "BREAKOUT_UP" : breakdown ? "BREAKDOWN" : "FAILED"
+
+    // Save to history if enabled
+    if show_history
+        // Determine colors based on result
+        zone_color = result == "BREAKOUT_UP" ? color.new(color.green, 85) :
+                     result == "BREAKDOWN" ? color.new(color.red, 85) :
+                     color.new(color.gray, 90)
+
+        border_color = result == "BREAKOUT_UP" ? color.green :
+                       result == "BREAKDOWN" ? color.red :
+                       color.gray
+
+        // Create history box
+        hist_box = box.new(zone_start_bar, current_zone_high, bar_index, current_zone_low,
+                          bgcolor=zone_color, border_color=border_color, border_width=1)
+
+        // Store in arrays
+        array.push(zone_history, hist_box)
+        array.push(zone_bar_start, zone_start_bar)
+        array.push(zone_bar_end, bar_index)
+        array.push(zone_high_hist, current_zone_high)
+        array.push(zone_low_hist, current_zone_low)
+        array.push(zone_result, result)
+
+        // Limit history size
+        if array.size(zone_history) > max_history_zones
+            old_box = array.shift(zone_history)
+            box.delete(old_box)
+            array.shift(zone_bar_start)
+            array.shift(zone_bar_end)
+            array.shift(zone_high_hist)
+            array.shift(zone_low_hist)
+            array.shift(zone_result)
+
+    // Reset tracking
+    was_in_zone := false
+    current_zone_high := na
+    current_zone_low := na
+
+// Cleanup old zones based on history_days
+bars_per_day = timeframe.isintraday ? math.round(24 * 60 / timeframe.multiplier) : 1
+max_history_bars = history_days * bars_per_day
+
+if show_history and array.size(zone_history) > 0
+    for i = array.size(zone_history) - 1 to 0
+        if i < array.size(zone_bar_end)
+            zone_end_bar = array.get(zone_bar_end, i)
+            if bar_index - zone_end_bar > max_history_bars
+                old_box = array.get(zone_history, i)
+                box.delete(old_box)
+                array.remove(zone_history, i)
+                array.remove(zone_bar_start, i)
+                array.remove(zone_bar_end, i)
+                array.remove(zone_high_hist, i)
+                array.remove(zone_low_hist, i)
+                array.remove(zone_result, i)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // VISUALIZATION
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Zone Drawing
-var box zone_box = na
-zone_color = volume_building ? color.new(color.yellow, 70) : color.new(color.gray, 80)
-zone_border = volume_building ? color.orange : color.gray
+// Current Active Zone Box
+var box current_box = na
+active_zone_color = is_accumulating ? color.new(color.yellow, 75) : color.new(color.orange, 80)
+active_border = is_accumulating ? color.yellow : color.orange
 
-if show_zones and is_valid_compression and not is_valid_compression[1]
-    zone_box := box.new(bar_index - compression_length, highest_N, bar_index, lowest_N,
-                        bgcolor=zone_color, border_color=zone_border, border_width=1)
-
-// Update zone box if still in compression
-if show_zones and is_valid_compression and not na(zone_box)
-    box.set_right(zone_box, bar_index)
-    box.set_top(zone_box, highest_N)
-    box.set_bottom(zone_box, lowest_N)
-    box.set_bgcolor(zone_box, zone_color)
-    box.set_border_color(zone_box, zone_border)
-
-// Clear zone box reference when compression ends
-if not is_valid_compression
-    zone_box := na
+if show_current_zone
+    if is_valid_zone and not is_valid_zone[1]
+        // New zone starting
+        current_box := box.new(bar_index - compression_count, zone_high, bar_index, zone_low,
+                              bgcolor=active_zone_color, border_color=active_border, border_width=2)
+    else if is_valid_zone and not na(current_box)
+        // Update existing zone
+        box.set_right(current_box, bar_index)
+        box.set_top(current_box, zone_high)
+        box.set_bottom(current_box, zone_low)
+        box.set_bgcolor(current_box, active_zone_color)
+        box.set_border_color(current_box, active_border)
+    else if not is_valid_zone and not na(current_box)
+        // Zone ended, clear reference (box remains as history)
+        current_box := na
 
 // Breakout Signals
-arrow_size_up = is_strong_spike ? size.large : size.normal
-arrow_size_down = is_strong_spike ? size.large : size.normal
-
 plotshape(breakout_up, title="Breakout UP", style=shape.triangleup, location=location.belowbar,
           color=color.lime, size=size.normal)
 plotshape(breakdown, title="Breakdown", style=shape.triangledown, location=location.abovebar,
           color=color.red, size=size.normal)
 
-// Retest signals
-plotshape(retest_long, title="Retest Long", style=shape.circle, location=location.belowbar,
-          color=color.new(color.lime, 30), size=size.small)
-plotshape(retest_short, title="Retest Short", style=shape.circle, location=location.abovebar,
-          color=color.new(color.red, 30), size=size.small)
-
-// Signal Labels
+// Signal Labels with details
 if show_labels and breakout_up
     strength_text = is_strong_spike ? "STRONG" : "NORMAL"
-    label_text = "BO UP\nVol:" + str.tostring(volume_ratio, "#.#") + "x\nRange:" + str.tostring(range_pct, "#.#") + "%\n" + strength_text
+    label_text = "LONG\nVol: " + str.tostring(vol_ratio, "#.#") + "x\nZone: " + str.tostring(zone_range_pct[confirm_bars], "#.#") + "%\nSL: " + str.tostring(stop_loss, "#.####") + "\nTP: " + str.tostring(take_profit, "#.####")
     label.new(bar_index, low, label_text, style=label.style_label_up, color=color.lime, textcolor=color.black, size=size.small)
 
 if show_labels and breakdown
     strength_text = is_strong_spike ? "STRONG" : "NORMAL"
-    label_text = "BD DOWN\nVol:" + str.tostring(volume_ratio, "#.#") + "x\nRange:" + str.tostring(range_pct, "#.#") + "%\n" + strength_text
+    label_text = "SHORT\nVol: " + str.tostring(vol_ratio, "#.#") + "x\nZone: " + str.tostring(zone_range_pct[confirm_bars], "#.#") + "%\nSL: " + str.tostring(stop_loss, "#.####") + "\nTP: " + str.tostring(take_profit, "#.####")
     label.new(bar_index, high, label_text, style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
 
-if show_labels and retest_long
-    label.new(bar_index, low, "RETEST\nLONG", style=label.style_label_up, color=color.new(color.lime, 30), textcolor=color.black, size=size.tiny)
-
-if show_labels and retest_short
-    label.new(bar_index, high, "RETEST\nSHORT", style=label.style_label_down, color=color.new(color.red, 30), textcolor=color.white, size=size.tiny)
-
 // SL/TP Lines
-var line sl_line_long = na
-var line tp_line_long = na
-var line sl_line_short = na
-var line tp_line_short = na
-
 if show_sl_tp and breakout_up
-    sl_line_long := line.new(bar_index, long_sl, bar_index + 20, long_sl,
-                             color=color.red, style=line.style_dashed, width=2)
-    tp_line_long := line.new(bar_index, long_tp, bar_index + 20, long_tp,
-                             color=color.green, style=line.style_dashed, width=2)
-    label.new(bar_index + 20, long_sl, "SL: " + str.tostring(long_sl, "#.####"), style=label.style_label_left, color=color.red, textcolor=color.white, size=size.tiny)
-    label.new(bar_index + 20, long_tp, "TP: " + str.tostring(long_tp, "#.####"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+    line.new(bar_index, stop_loss, bar_index + 30, stop_loss,
+             color=color.red, style=line.style_dashed, width=1)
+    line.new(bar_index, take_profit, bar_index + 30, take_profit,
+             color=color.green, style=line.style_dashed, width=1)
 
 if show_sl_tp and breakdown
-    sl_line_short := line.new(bar_index, short_sl, bar_index + 20, short_sl,
-                              color=color.red, style=line.style_dashed, width=2)
-    tp_line_short := line.new(bar_index, short_tp, bar_index + 20, short_tp,
-                              color=color.green, style=line.style_dashed, width=2)
-    label.new(bar_index + 20, short_sl, "SL: " + str.tostring(short_sl, "#.####"), style=label.style_label_left, color=color.red, textcolor=color.white, size=size.tiny)
-    label.new(bar_index + 20, short_tp, "TP: " + str.tostring(short_tp, "#.####"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+    line.new(bar_index, stop_loss, bar_index + 30, stop_loss,
+             color=color.red, style=line.style_dashed, width=1)
+    line.new(bar_index, take_profit, bar_index + 30, take_profit,
+             color=color.green, style=line.style_dashed, width=1)
 
-// Dashboard Table
-var table dashboard = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 80), border_width=1)
+// ══════════════════════════════════════════════════════════════════════════════
+// INFO PANEL (Dashboard)
+// ══════════════════════════════════════════════════════════════════════════════
+
+var table panel = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 80), border_width=1)
 
 if show_dashboard and barstate.islast
     // Header
-    table.cell(dashboard, 0, 0, "COMPRESSION ZONE", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 60))
-    table.cell(dashboard, 1, 0, "", bgcolor=color.new(color.blue, 60))
+    table.cell(panel, 0, 0, "COMPRESSION ZONE", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 60))
+    table.cell(panel, 1, 0, "", bgcolor=color.new(color.blue, 60))
 
-    // Compression Status
-    table.cell(dashboard, 0, 1, "Status", text_color=color.white, text_size=size.tiny)
-    status_text = is_valid_compression ? "ACTIVE (" + str.tostring(compression_bars) + " bars)" : "NO ZONE"
-    status_color = is_valid_compression ? color.lime : color.gray
-    table.cell(dashboard, 1, 1, status_text, text_color=status_color, text_size=size.tiny)
+    // Zone Status
+    table.cell(panel, 0, 1, "Status", text_color=color.gray, text_size=size.tiny)
+    status_text = is_valid_zone ? "ACTIVE" : "NONE"
+    status_color = is_valid_zone ? color.lime : color.gray
+    table.cell(panel, 1, 1, status_text, text_color=status_color, text_size=size.tiny)
 
-    // Range %
-    table.cell(dashboard, 0, 2, "Range %", text_color=color.white, text_size=size.tiny)
-    range_color = range_pct < dynamic_range_threshold ? color.lime : color.orange
-    table.cell(dashboard, 1, 2, str.tostring(range_pct, "#.##") + "% / " + str.tostring(dynamic_range_threshold, "#.##") + "%", text_color=range_color, text_size=size.tiny)
+    // Range
+    table.cell(panel, 0, 2, "Range", text_color=color.gray, text_size=size.tiny)
+    range_color = zone_range_pct <= dynamic_threshold ? color.lime : color.orange
+    table.cell(panel, 1, 2, str.tostring(zone_range_pct, "#.##") + "% / " + str.tostring(dynamic_threshold, "#.##") + "%", text_color=range_color, text_size=size.tiny)
 
-    // Volume Ratio
-    table.cell(dashboard, 0, 3, "Vol Ratio", text_color=color.white, text_size=size.tiny)
-    vol_color = is_strong_spike ? color.lime : is_volume_spike ? color.yellow : color.gray
-    table.cell(dashboard, 1, 3, str.tostring(volume_ratio, "#.#") + "x", text_color=vol_color, text_size=size.tiny)
+    // Volume
+    table.cell(panel, 0, 3, "Volume", text_color=color.gray, text_size=size.tiny)
+    vol_color = is_strong_spike ? color.lime : is_volume_spike ? color.yellow : color.white
+    table.cell(panel, 1, 3, str.tostring(vol_ratio, "#.#") + "x", text_color=vol_color, text_size=size.tiny)
 
-    // RSI
-    table.cell(dashboard, 0, 4, "RSI", text_color=color.white, text_size=size.tiny)
-    rsi_color = rsi > rsi_ob ? color.red : rsi < rsi_os ? color.green : color.white
-    table.cell(dashboard, 1, 4, str.tostring(rsi, "#"), text_color=rsi_color, text_size=size.tiny)
+    // Bars in Zone
+    table.cell(panel, 0, 4, "Bars", text_color=color.gray, text_size=size.tiny)
+    table.cell(panel, 1, 4, str.tostring(compression_count), text_color=color.white, text_size=size.tiny)
 
-    // Momentum
-    table.cell(dashboard, 0, 5, "Momentum", text_color=color.white, text_size=size.tiny)
-    mom_text = bullish_momentum ? "BULL" : bearish_momentum ? "BEAR" : "NEUTRAL"
-    mom_color = bullish_momentum ? color.lime : bearish_momentum ? color.red : color.gray
-    table.cell(dashboard, 1, 5, mom_text, text_color=mom_color, text_size=size.tiny)
+    // Accumulating
+    table.cell(panel, 0, 5, "Accumulating", text_color=color.gray, text_size=size.tiny)
+    acc_text = is_accumulating ? "YES" : "NO"
+    acc_color = is_accumulating ? color.yellow : color.gray
+    table.cell(panel, 1, 5, acc_text, text_color=acc_color, text_size=size.tiny)
 
-    // Volume Building
-    table.cell(dashboard, 0, 6, "Vol Building", text_color=color.white, text_size=size.tiny)
-    vb_text = volume_building ? "YES" : "NO"
-    vb_color = volume_building ? color.yellow : color.gray
-    table.cell(dashboard, 1, 6, vb_text, text_color=vb_color, text_size=size.tiny)
+// ══════════════════════════════════════════════════════════════════════════════
+// ZONE STATISTICS TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+
+var table stats_table = table.new(position.bottom_right, 2, 5, bgcolor=color.new(color.black, 80), border_width=1)
+
+if show_stats and barstate.islast and show_history
+    // Count results
+    total_zones = array.size(zone_result)
+    breakout_ups = 0
+    breakdowns = 0
+    failed = 0
+
+    if total_zones > 0
+        for i = 0 to total_zones - 1
+            r = array.get(zone_result, i)
+            if r == "BREAKOUT_UP"
+                breakout_ups := breakout_ups + 1
+            else if r == "BREAKDOWN"
+                breakdowns := breakdowns + 1
+            else
+                failed := failed + 1
+
+    signal_rate = total_zones > 0 ? (breakout_ups + breakdowns) / total_zones * 100 : 0.0
+
+    // Header
+    table.cell(stats_table, 0, 0, "ZONE HISTORY", text_color=color.orange, text_size=size.small, bgcolor=color.new(color.purple, 60))
+    table.cell(stats_table, 1, 0, str.tostring(total_zones) + " zones", text_color=color.white, text_size=size.small, bgcolor=color.new(color.purple, 60))
+
+    // Breakout Up count
+    table.cell(stats_table, 0, 1, "Breakout Up", text_color=color.gray, text_size=size.tiny)
+    table.cell(stats_table, 1, 1, str.tostring(breakout_ups), text_color=color.lime, text_size=size.tiny)
+
+    // Breakdown count
+    table.cell(stats_table, 0, 2, "Breakdown", text_color=color.gray, text_size=size.tiny)
+    table.cell(stats_table, 1, 2, str.tostring(breakdowns), text_color=color.red, text_size=size.tiny)
+
+    // Failed count
+    table.cell(stats_table, 0, 3, "Failed", text_color=color.gray, text_size=size.tiny)
+    table.cell(stats_table, 1, 3, str.tostring(failed), text_color=color.gray, text_size=size.tiny)
+
+    // Signal Rate
+    table.cell(stats_table, 0, 4, "Signal Rate", text_color=color.gray, text_size=size.tiny)
+    rate_color = signal_rate >= 60 ? color.lime : signal_rate >= 40 ? color.yellow : color.red
+    table.cell(stats_table, 1, 4, str.tostring(signal_rate, "#.#") + "%", text_color=rate_color, text_size=size.tiny)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ALERTS
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Breakout Alerts - Using const strings for Pine Script v6 compatibility
-alertcondition(breakout_up, title="Breakout UP",
-    message="BREAKOUT UP - Check chart for details: Volume spike detected, compression zone breakout confirmed")
-
-alertcondition(breakdown, title="Breakdown",
-    message="BREAKDOWN - Check chart for details: Volume spike detected, compression zone breakdown confirmed")
-
-// Early Warning Alerts
-alertcondition(is_valid_compression and not is_valid_compression[1],
+// Zone forming alert
+alertcondition(is_valid_zone and not is_valid_zone[1],
     title="Zone Forming",
     message="COMPRESSION ZONE FORMING - Watch for potential breakout")
 
-alertcondition(is_valid_compression and volume_building and volume_ratio > 1.5,
-    title="Volume Building",
-    message="VOLUME ACCUMULATING IN COMPRESSION - Breakout may be imminent")
+// Breakout UP alert
+alertcondition(breakout_up,
+    title="Breakout UP",
+    message="BREAKOUT UP - Volume spike confirmed, compression zone breakout detected")
 
-// Retest Alerts
-alertcondition(retest_long, title="Retest Long",
-    message="RETEST ENTRY LONG - Price retesting breakout zone support")
+// Breakdown alert
+alertcondition(breakdown,
+    title="Breakdown",
+    message="BREAKDOWN - Volume spike confirmed, compression zone breakdown detected")
 
-alertcondition(retest_short, title="Retest Short",
-    message="RETEST ENTRY SHORT - Price retesting breakdown zone resistance")
+// Volume spike in zone alert
+alertcondition(is_valid_zone and is_volume_spike and not breakout_up and not breakdown,
+    title="Volume Spike in Zone",
+    message="VOLUME SPIKE IN COMPRESSION ZONE - Breakout may be imminent")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PLOT DATA FOR EXTERNAL USE
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Plot hidden values for strategy integration
-plot(is_valid_compression ? 1 : 0, title="Compression Active", display=display.none)
-plot(range_pct, title="Range %", display=display.none)
-plot(volume_ratio, title="Volume Ratio", display=display.none)
-plot(rsi, title="RSI", display=display.none)
-plot(breakout_up ? 1 : 0, title="Breakout UP Signal", display=display.none)
-plot(breakdown ? 1 : 0, title="Breakdown Signal", display=display.none)
-plot(retest_long ? 1 : 0, title="Retest Long Signal", display=display.none)
-plot(retest_short ? 1 : 0, title="Retest Short Signal", display=display.none)
-plot(long_sl, title="Long SL", display=display.none)
-plot(long_tp, title="Long TP", display=display.none)
-plot(short_sl, title="Short SL", display=display.none)
-plot(short_tp, title="Short TP", display=display.none)
+plot(is_valid_zone ? 1 : 0, title="Zone Active", display=display.none)
+plot(zone_range_pct, title="Zone Range %", display=display.none)
+plot(vol_ratio, title="Volume Ratio", display=display.none)
+plot(breakout_up ? 1 : 0, title="Breakout UP", display=display.none)
+plot(breakdown ? 1 : 0, title="Breakdown", display=display.none)
+plot(stop_loss, title="Stop Loss", display=display.none)
+plot(take_profit, title="Take Profit", display=display.none)

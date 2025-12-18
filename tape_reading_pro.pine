@@ -61,6 +61,39 @@ color_exhaustion = input.color(color.new(color.orange, 0), "Exhaustion", group=g
 color_delta_buy = input.color(color.new(color.lime, 60), "Delta Buy Pressure", group=group_visual)
 color_delta_sell = input.color(color.new(color.maroon, 60), "Delta Sell Pressure", group=group_visual)
 
+// === ENTRY MANAGEMENT MODULE ===
+group_entry = "═══ ENTRY MANAGEMENT ═══"
+show_entry_management = input.bool(true, "Show Entry Management", group=group_entry, tooltip="Display entry, stop loss, and take profit levels")
+reset_on_opposite_signal = input.bool(true, "Reset on Opposite Signal", group=group_entry, tooltip="Clear current setup when opposite signal appears")
+
+// === STOP LOSS SETTINGS ===
+group_sl = "═══ STOP LOSS SETTINGS ═══"
+sl_type = input.string("Percentage", "Stop Loss Type", options=["Percentage", "ATR", "Swing Point"], group=group_sl, tooltip="Method for calculating stop loss distance")
+sl_percentage = input.float(2.0, "SL Percentage", minval=0.1, maxval=20.0, step=0.1, group=group_sl, tooltip="Stop loss distance as percentage of entry price")
+sl_atr_multiplier = input.float(1.5, "SL ATR Multiplier", minval=0.5, maxval=5.0, step=0.1, group=group_sl, tooltip="ATR multiplier for stop loss distance")
+sl_atr_length = input.int(14, "SL ATR Length", minval=5, maxval=50, group=group_sl, tooltip="ATR period for stop loss calculation")
+sl_swing_lookback = input.int(10, "Swing Lookback", minval=3, maxval=50, group=group_sl, tooltip="Number of bars to look back for swing high/low")
+
+// === TAKE PROFIT SETTINGS ===
+group_tp = "═══ TAKE PROFIT SETTINGS ═══"
+tp_type = input.string("Risk:Reward", "Take Profit Type", options=["Percentage", "Risk:Reward", "Fixed Points"], group=group_tp, tooltip="Method for calculating take profit levels")
+tp_percentage = input.float(4.0, "TP Percentage", minval=0.1, maxval=50.0, step=0.1, group=group_tp, tooltip="Take profit distance as percentage of entry price")
+tp_rr_ratio = input.float(2.0, "Risk:Reward Ratio", minval=0.5, maxval=10.0, step=0.1, group=group_tp, tooltip="Take profit as multiple of risk (e.g., 2.0 = 1:2 R:R)")
+tp_fixed_points = input.float(100.0, "TP Fixed Points", minval=1.0, maxval=10000.0, step=1.0, group=group_tp, tooltip="Fixed point distance for take profit")
+use_multiple_tps = input.bool(true, "Use Multiple TPs", group=group_tp, tooltip="Enable TP1, TP2, TP3 levels")
+tp2_multiplier = input.float(1.5, "TP2 Multiplier", minval=1.1, maxval=5.0, step=0.1, group=group_tp, tooltip="Multiplier for TP2 (relative to TP1 distance)")
+tp3_multiplier = input.float(2.5, "TP3 Multiplier", minval=1.5, maxval=10.0, step=0.1, group=group_tp, tooltip="Multiplier for TP3 (relative to TP1 distance)")
+
+// === ENTRY VISUAL SETTINGS ===
+group_entry_visual = "═══ ENTRY VISUALS ═══"
+color_long_setup = input.color(color.new(color.green, 0), "Long Setup Color", group=group_entry_visual)
+color_short_setup = input.color(color.new(color.red, 0), "Short Setup Color", group=group_entry_visual)
+color_sl = input.color(color.new(color.red, 30), "Stop Loss Color", group=group_entry_visual)
+color_tp = input.color(color.new(color.teal, 30), "Take Profit Color", group=group_entry_visual)
+line_width_entry = input.int(2, "Entry Line Width", minval=1, maxval=4, group=group_entry_visual)
+line_width_sl_tp = input.int(1, "SL/TP Line Width", minval=1, maxval=4, group=group_entry_visual)
+show_signals_table = input.bool(true, "Show Signals Table", group=group_entry_visual, tooltip="Display trade management information table")
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // CORE TAPE READING CALCULATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -157,6 +190,228 @@ is_strong_absorption = is_absorption and absorption_count >= 2
 
 // === EXHAUSTION ===
 show_exhaustion_signal = show_exhaustion and is_exhaustion_warning
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENTRY MANAGEMENT - STOP LOSS & TAKE PROFIT CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// === ATR FOR STOP LOSS ===
+atr_value = ta.atr(sl_atr_length)
+
+// === SWING POINT DETECTION ===
+// Find recent swing lows for long SL
+swing_low = ta.lowest(low, sl_swing_lookback)
+// Find recent swing highs for short SL
+swing_high = ta.highest(high, sl_swing_lookback)
+
+// === PERSISTENT VARIABLES FOR ENTRY TRACKING ===
+var int signal_direction = 0          // 1 = Long, -1 = Short, 0 = No position
+var float entry_price = na
+var int entry_bar = na
+var float stop_loss_price = na
+var float take_profit_1 = na
+var float take_profit_2 = na
+var float take_profit_3 = na
+var float risk_amount = na
+var bool tp1_hit = false
+var bool tp2_hit = false
+var bool tp3_hit = false
+var bool sl_hit = false
+
+// === LINE VARIABLES ===
+var line entry_line = na
+var line sl_line = na
+var line tp1_line = na
+var line tp2_line = na
+var line tp3_line = na
+
+// === LABEL VARIABLES ===
+var label entry_label = na
+var label sl_label = na
+var label tp1_label = na
+var label tp2_label = na
+var label tp3_label = na
+
+// === STOP LOSS CALCULATION FUNCTION ===
+calc_stop_loss(bool is_long, float entry) =>
+    float sl = na
+    if sl_type == "Percentage"
+        sl := is_long ? entry * (1 - sl_percentage / 100) : entry * (1 + sl_percentage / 100)
+    else if sl_type == "ATR"
+        sl := is_long ? entry - (atr_value * sl_atr_multiplier) : entry + (atr_value * sl_atr_multiplier)
+    else if sl_type == "Swing Point"
+        // For long: use recent swing low minus buffer
+        // For short: use recent swing high plus buffer
+        float buffer = atr_value * 0.1  // Small buffer beyond swing point
+        sl := is_long ? swing_low - buffer : swing_high + buffer
+    sl
+
+// === TAKE PROFIT CALCULATION FUNCTION ===
+calc_take_profit(bool is_long, float entry, float sl, float tp_dist) =>
+    float tp = na
+    if tp_type == "Percentage"
+        tp := is_long ? entry * (1 + tp_percentage / 100) : entry * (1 - tp_percentage / 100)
+    else if tp_type == "Risk:Reward"
+        float risk = math.abs(entry - sl)
+        tp := is_long ? entry + (risk * tp_rr_ratio * tp_dist) : entry - (risk * tp_rr_ratio * tp_dist)
+    else if tp_type == "Fixed Points"
+        float tick_size = syminfo.mintick
+        tp := is_long ? entry + (tp_fixed_points * tick_size * tp_dist) : entry - (tp_fixed_points * tick_size * tp_dist)
+    tp
+
+// === DELETE OLD LINES AND LABELS ===
+delete_entry_visuals() =>
+    line.delete(entry_line)
+    line.delete(sl_line)
+    line.delete(tp1_line)
+    line.delete(tp2_line)
+    line.delete(tp3_line)
+    label.delete(entry_label)
+    label.delete(sl_label)
+    label.delete(tp1_label)
+    label.delete(tp2_label)
+    label.delete(tp3_label)
+
+// === CHECK IF LEVELS ARE HIT ===
+check_levels_hit() =>
+    if signal_direction == 1  // Long position
+        if not na(stop_loss_price) and low <= stop_loss_price
+            sl_hit := true
+        if not na(take_profit_1) and high >= take_profit_1
+            tp1_hit := true
+        if not na(take_profit_2) and high >= take_profit_2
+            tp2_hit := true
+        if not na(take_profit_3) and high >= take_profit_3
+            tp3_hit := true
+    else if signal_direction == -1  // Short position
+        if not na(stop_loss_price) and high >= stop_loss_price
+            sl_hit := true
+        if not na(take_profit_1) and low <= take_profit_1
+            tp1_hit := true
+        if not na(take_profit_2) and low <= take_profit_2
+            tp2_hit := true
+        if not na(take_profit_3) and low <= take_profit_3
+            tp3_hit := true
+
+// === ENTRY SIGNAL PROCESSING ===
+if show_entry_management
+    // Check if levels are hit
+    check_levels_hit()
+
+    // Reset position if SL or all TPs hit
+    bool should_reset = sl_hit or (tp1_hit and tp2_hit and tp3_hit and use_multiple_tps) or (tp1_hit and not use_multiple_tps)
+
+    // New Long Entry Signal
+    if is_aggressive_buy and (signal_direction != 1 or should_reset)
+        // Reset on opposite signal if enabled
+        if reset_on_opposite_signal or signal_direction == 0 or should_reset
+            delete_entry_visuals()
+
+            signal_direction := 1
+            entry_price := close
+            entry_bar := bar_index
+            stop_loss_price := calc_stop_loss(true, entry_price)
+            risk_amount := entry_price - stop_loss_price
+            take_profit_1 := calc_take_profit(true, entry_price, stop_loss_price, 1.0)
+            take_profit_2 := use_multiple_tps ? calc_take_profit(true, entry_price, stop_loss_price, tp2_multiplier) : na
+            take_profit_3 := use_multiple_tps ? calc_take_profit(true, entry_price, stop_loss_price, tp3_multiplier) : na
+            tp1_hit := false
+            tp2_hit := false
+            tp3_hit := false
+            sl_hit := false
+
+    // New Short Entry Signal
+    if is_aggressive_sell and (signal_direction != -1 or should_reset)
+        if reset_on_opposite_signal or signal_direction == 0 or should_reset
+            delete_entry_visuals()
+
+            signal_direction := -1
+            entry_price := close
+            entry_bar := bar_index
+            stop_loss_price := calc_stop_loss(false, entry_price)
+            risk_amount := stop_loss_price - entry_price
+            take_profit_1 := calc_take_profit(false, entry_price, stop_loss_price, 1.0)
+            take_profit_2 := use_multiple_tps ? calc_take_profit(false, entry_price, stop_loss_price, tp2_multiplier) : na
+            take_profit_3 := use_multiple_tps ? calc_take_profit(false, entry_price, stop_loss_price, tp3_multiplier) : na
+            tp1_hit := false
+            tp2_hit := false
+            tp3_hit := false
+            sl_hit := false
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENTRY MANAGEMENT VISUALIZATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// === DRAW LINES AND LABELS ===
+if show_entry_management and signal_direction != 0 and not na(entry_price)
+    // Determine colors based on direction
+    color setup_color = signal_direction == 1 ? color_long_setup : color_short_setup
+    string direction_text = signal_direction == 1 ? "LONG" : "SHORT"
+
+    // Calculate R:R ratio for labels
+    float current_rr = not na(risk_amount) and risk_amount != 0 ? math.abs(take_profit_1 - entry_price) / risk_amount : 0
+
+    // Delete old lines to update positions
+    line.delete(entry_line)
+    line.delete(sl_line)
+    line.delete(tp1_line)
+    line.delete(tp2_line)
+    line.delete(tp3_line)
+    label.delete(entry_label)
+    label.delete(sl_label)
+    label.delete(tp1_label)
+    label.delete(tp2_label)
+    label.delete(tp3_label)
+
+    // Entry Line (solid)
+    entry_line := line.new(entry_bar, entry_price, bar_index + 10, entry_price,
+                           color=setup_color, width=line_width_entry, style=line.style_solid)
+    entry_label := label.new(bar_index + 11, entry_price,
+                             direction_text + " Entry: " + str.tostring(entry_price, format.mintick),
+                             style=label.style_label_left, color=setup_color, textcolor=color.white, size=size.small)
+
+    // Stop Loss Line (dashed)
+    color sl_line_color = sl_hit ? color.new(color_sl, 70) : color_sl
+    sl_line := line.new(entry_bar, stop_loss_price, bar_index + 10, stop_loss_price,
+                        color=sl_line_color, width=line_width_sl_tp, style=line.style_dashed)
+    float sl_distance_pct = math.abs(entry_price - stop_loss_price) / entry_price * 100
+    string sl_status = sl_hit ? " [HIT]" : ""
+    sl_label := label.new(bar_index + 11, stop_loss_price,
+                          "SL: " + str.tostring(stop_loss_price, format.mintick) + " (-" + str.tostring(sl_distance_pct, "#.##") + "%)" + sl_status,
+                          style=label.style_label_left, color=sl_line_color, textcolor=color.white, size=size.tiny)
+
+    // Take Profit 1 Line (dotted)
+    if not na(take_profit_1)
+        color tp1_color = tp1_hit ? color.new(color_tp, 70) : color_tp
+        tp1_line := line.new(entry_bar, take_profit_1, bar_index + 10, take_profit_1,
+                             color=tp1_color, width=line_width_sl_tp, style=line.style_dotted)
+        float tp1_rr = not na(risk_amount) and risk_amount != 0 ? math.abs(take_profit_1 - entry_price) / risk_amount : 0
+        string tp1_status = tp1_hit ? " [HIT]" : ""
+        tp1_label := label.new(bar_index + 11, take_profit_1,
+                               "TP1: " + str.tostring(take_profit_1, format.mintick) + " (1:" + str.tostring(tp1_rr, "#.#") + " R:R)" + tp1_status,
+                               style=label.style_label_left, color=tp1_color, textcolor=color.white, size=size.tiny)
+
+    // Take Profit 2 Line (dotted)
+    if use_multiple_tps and not na(take_profit_2)
+        color tp2_color = tp2_hit ? color.new(color_tp, 70) : color_tp
+        tp2_line := line.new(entry_bar, take_profit_2, bar_index + 10, take_profit_2,
+                             color=tp2_color, width=line_width_sl_tp, style=line.style_dotted)
+        float tp2_rr = not na(risk_amount) and risk_amount != 0 ? math.abs(take_profit_2 - entry_price) / risk_amount : 0
+        string tp2_status = tp2_hit ? " [HIT]" : ""
+        tp2_label := label.new(bar_index + 11, take_profit_2,
+                               "TP2: " + str.tostring(take_profit_2, format.mintick) + " (1:" + str.tostring(tp2_rr, "#.#") + " R:R)" + tp2_status,
+                               style=label.style_label_left, color=tp2_color, textcolor=color.white, size=size.tiny)
+
+    // Take Profit 3 Line (dotted)
+    if use_multiple_tps and not na(take_profit_3)
+        color tp3_color = tp3_hit ? color.new(color_tp, 70) : color_tp
+        tp3_line := line.new(entry_bar, take_profit_3, bar_index + 10, take_profit_3,
+                             color=tp3_color, width=line_width_sl_tp, style=line.style_dotted)
+        float tp3_rr = not na(risk_amount) and risk_amount != 0 ? math.abs(take_profit_3 - entry_price) / risk_amount : 0
+        string tp3_status = tp3_hit ? " [HIT]" : ""
+        tp3_label := label.new(bar_index + 11, take_profit_3,
+                               "TP3: " + str.tostring(take_profit_3, format.mintick) + " (1:" + str.tostring(tp3_rr, "#.#") + " R:R)" + tp3_status,
+                               style=label.style_label_left, color=tp3_color, textcolor=color.white, size=size.tiny)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CANDLE COLORING
@@ -302,6 +557,127 @@ if show_metrics_table and barstate.islast
     table.cell(metrics_table, 1, 6, tape_state, bgcolor=state_color, text_size=size.small)
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// TABLE: SIGNALS & TRADE MANAGEMENT DISPLAY
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if show_signals_table and show_entry_management and barstate.islast
+    // Determine table rows needed
+    int table_rows = use_multiple_tps ? 10 : 8
+    var table signals_table = table.new(position.bottom_right, 2, table_rows, border_width=1)
+
+    // Direction colors
+    color header_color = signal_direction == 1 ? color_long_setup : signal_direction == -1 ? color_short_setup : color.gray
+    string signal_type = signal_direction == 1 ? "LONG" : signal_direction == -1 ? "SHORT" : "NO SIGNAL"
+
+    // Header
+    table.cell(signals_table, 0, 0, "Trade Info", bgcolor=header_color, text_color=color.white, text_size=size.small)
+    table.cell(signals_table, 1, 0, "Value", bgcolor=header_color, text_color=color.white, text_size=size.small)
+
+    // Signal Type
+    table.cell(signals_table, 0, 1, "Signal", text_size=size.small)
+    table.cell(signals_table, 1, 1, signal_type, bgcolor=header_color, text_color=color.white, text_size=size.small)
+
+    // Entry Price
+    table.cell(signals_table, 0, 2, "Entry Price", text_size=size.small)
+    string entry_str = not na(entry_price) ? str.tostring(entry_price, format.mintick) : "---"
+    table.cell(signals_table, 1, 2, entry_str, text_size=size.small)
+
+    // Stop Loss
+    table.cell(signals_table, 0, 3, "Stop Loss", text_size=size.small)
+    string sl_str = "---"
+    color sl_bg = na
+    if not na(stop_loss_price) and not na(entry_price)
+        float sl_dist = math.abs(entry_price - stop_loss_price) / entry_price * 100
+        sl_str := str.tostring(stop_loss_price, format.mintick) + " (" + str.tostring(sl_dist, "#.##") + "%)"
+        sl_bg := sl_hit ? color.new(color.red, 50) : na
+    table.cell(signals_table, 1, 3, sl_str, bgcolor=sl_bg, text_size=size.small)
+
+    // Take Profit 1
+    table.cell(signals_table, 0, 4, "TP1", text_size=size.small)
+    string tp1_str = "---"
+    color tp1_bg = na
+    if not na(take_profit_1) and not na(entry_price) and not na(risk_amount) and risk_amount != 0
+        float tp1_rr_val = math.abs(take_profit_1 - entry_price) / risk_amount
+        tp1_str := str.tostring(take_profit_1, format.mintick) + " (1:" + str.tostring(tp1_rr_val, "#.#") + ")"
+        tp1_bg := tp1_hit ? color.new(color.teal, 50) : na
+    table.cell(signals_table, 1, 4, tp1_str, bgcolor=tp1_bg, text_size=size.small)
+
+    // Take Profit 2 (if multiple TPs enabled)
+    if use_multiple_tps
+        table.cell(signals_table, 0, 5, "TP2", text_size=size.small)
+        string tp2_str = "---"
+        color tp2_bg = na
+        if not na(take_profit_2) and not na(entry_price) and not na(risk_amount) and risk_amount != 0
+            float tp2_rr_val = math.abs(take_profit_2 - entry_price) / risk_amount
+            tp2_str := str.tostring(take_profit_2, format.mintick) + " (1:" + str.tostring(tp2_rr_val, "#.#") + ")"
+            tp2_bg := tp2_hit ? color.new(color.teal, 50) : na
+        table.cell(signals_table, 1, 5, tp2_str, bgcolor=tp2_bg, text_size=size.small)
+
+        // Take Profit 3
+        table.cell(signals_table, 0, 6, "TP3", text_size=size.small)
+        string tp3_str = "---"
+        color tp3_bg = na
+        if not na(take_profit_3) and not na(entry_price) and not na(risk_amount) and risk_amount != 0
+            float tp3_rr_val = math.abs(take_profit_3 - entry_price) / risk_amount
+            tp3_str := str.tostring(take_profit_3, format.mintick) + " (1:" + str.tostring(tp3_rr_val, "#.#") + ")"
+            tp3_bg := tp3_hit ? color.new(color.teal, 50) : na
+        table.cell(signals_table, 1, 6, tp3_str, bgcolor=tp3_bg, text_size=size.small)
+
+    // P&L Calculation
+    int pnl_row = use_multiple_tps ? 7 : 5
+    table.cell(signals_table, 0, pnl_row, "Current P&L", text_size=size.small)
+    string pnl_str = "---"
+    color pnl_bg = na
+    if signal_direction != 0 and not na(entry_price)
+        float pnl_pct = signal_direction == 1 ?
+            (close - entry_price) / entry_price * 100 :
+            (entry_price - close) / entry_price * 100
+        float pnl_r = not na(risk_amount) and risk_amount != 0 ?
+            (signal_direction == 1 ? (close - entry_price) : (entry_price - close)) / risk_amount : 0
+        pnl_str := str.tostring(pnl_pct, "#.##") + "% (" + str.tostring(pnl_r, "#.##") + "R)"
+        pnl_bg := pnl_pct > 0 ? color.new(color.green, 70) : pnl_pct < 0 ? color.new(color.red, 70) : na
+    table.cell(signals_table, 1, pnl_row, pnl_str, bgcolor=pnl_bg, text_size=size.small)
+
+    // Trade Status
+    int status_row = use_multiple_tps ? 8 : 6
+    table.cell(signals_table, 0, status_row, "Status", text_size=size.small)
+    string status_str = "---"
+    color status_bg = na
+    if signal_direction != 0
+        if sl_hit
+            status_str := "SL HIT"
+            status_bg := color.new(color.red, 50)
+        else if use_multiple_tps and tp3_hit
+            status_str := "ALL TPs HIT"
+            status_bg := color.new(color.teal, 50)
+        else if use_multiple_tps and tp2_hit
+            status_str := "TP2 HIT"
+            status_bg := color.new(color.teal, 60)
+        else if tp1_hit
+            status_str := "TP1 HIT"
+            status_bg := color.new(color.teal, 70)
+        else
+            status_str := "ACTIVE"
+            status_bg := color.new(color.blue, 70)
+    table.cell(signals_table, 1, status_row, status_str, bgcolor=status_bg, text_size=size.small)
+
+    // Risk Amount
+    int risk_row = use_multiple_tps ? 9 : 7
+    table.cell(signals_table, 0, risk_row, "Risk (1R)", text_size=size.small)
+    string risk_str = not na(risk_amount) ? str.tostring(risk_amount, format.mintick) : "---"
+    table.cell(signals_table, 1, risk_row, risk_str, text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERT CONDITIONS FOR ENTRY SIGNALS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Entry signal alerts with SL/TP information
+alertcondition(is_aggressive_buy and show_entry_management, title="Long Entry Signal",
+    message="Tape Reading: LONG Entry Signal - Check chart for SL/TP levels")
+alertcondition(is_aggressive_sell and show_entry_management, title="Short Entry Signal",
+    message="Tape Reading: SHORT Entry Signal - Check chart for SL/TP levels")
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // EXPLANATION & USAGE NOTES (visible in indicator info)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -334,6 +710,29 @@ if show_metrics_table and barstate.islast
 //    - Blue candles = Absorption (watch for breakout)
 //    - Orange candles = Exhaustion warning
 //
+// 6. ENTRY MANAGEMENT MODULE (New Feature)
+//    - Automatic entry signals on aggressive buy/sell detection
+//    - Stop Loss Types:
+//      * Percentage: Fixed % from entry (default 2%)
+//      * ATR: Dynamic SL based on ATR multiplier (default 1.5x ATR)
+//      * Swing Point: Uses recent swing low (long) / swing high (short)
+//    - Take Profit Types:
+//      * Percentage: Fixed % from entry (default 4%)
+//      * Risk:Reward: Based on SL distance (default 1:2 R:R)
+//      * Fixed Points: Absolute point distance
+//    - Multiple TPs: TP1, TP2, TP3 with customizable multipliers
+//    - Visual Features:
+//      * Solid lines for entry price
+//      * Dashed lines for stop loss
+//      * Dotted lines for take profit levels
+//      * Labels show exact prices and R:R ratios
+//      * Lines extend from entry bar and update in real-time
+//    - Signals Table (bottom-right):
+//      * Current signal type (Long/Short)
+//      * Entry price, SL, and TP levels
+//      * Real-time P&L in % and R multiples
+//      * Trade status (Active, TP1 Hit, SL Hit, etc.)
+//
 // VALIDATION PROCESS:
 // - Test on 12 different charts (3 low TF, 3 medium TF, 3 high TF, 3 markets)
 // - Check if absorption zones lead to breakouts
@@ -346,9 +745,13 @@ if show_metrics_table and barstate.islast
 // - Absorption works best in ranging markets (preparation phase)
 // - Aggressive signals work best in trending markets (momentum phase)
 // - Avoid choppy/low-volume periods
+// - Use Entry Management for trade planning (not fully automated trading)
+// - Adjust SL type based on market volatility (ATR for volatile, % for stable)
+// - Consider partial profits at TP1/TP2, let remainder run to TP3
 //
 // LIMITATIONS:
 // - TradingView doesn't provide real delta, so we estimate it
 // - Works best on timeframes 1m to Daily
 // - Requires sufficient volume data (avoid illiquid assets)
 // - Not designed for fully automated trading (discretionary tool)
+// - Entry Management is for visualization only (not a strategy)

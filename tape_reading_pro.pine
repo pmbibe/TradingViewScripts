@@ -30,7 +30,7 @@ show_absorption = input.bool(true, "Show Absorption Zones", group=group_modules,
 show_exhaustion = input.bool(true, "Show Exhaustion Signals", group=group_modules, tooltip="Detect climax volume followed by reversals")
 show_delta_histogram = input.bool(true, "Show Volume Delta Histogram", group=group_modules, tooltip="Display estimated buying/selling pressure")
 show_labels = input.bool(true, "Show Event Labels", group=group_modules, tooltip="Display labels for key tape reading events")
-show_candle_colors = input.bool(true, "Color Candles by Tape Condition", group=group_modules, tooltip="Override candle colors based on order flow")
+show_candle_colors = input.bool(false, "Color Candles by Tape Condition", group=group_modules, tooltip="Override candle colors based on order flow (disabled by default for cleaner chart)")
 
 // === VOLUME PARAMETERS ===
 group_volume = "═══ VOLUME PARAMETERS ═══"
@@ -54,15 +54,26 @@ exhaustion_reversal_bars = input.int(3, "Exhaustion Reversal Bars", minval=1, ma
 
 // === VISUAL SETTINGS ===
 group_visual = "═══ VISUAL SETTINGS ═══"
+
+// Display Mode
 signal_display_mode = input.string("Shapes Only", "Signal Display Mode", options=["Labels Only", "Shapes Only", "Both", "None"], group=group_visual, tooltip="Choose how to display signals on chart")
-show_backgrounds = input.bool(false, "Show Background Highlights", group=group_visual, tooltip="Highlight absorption and exhaustion zones with subtle background colors")
-show_metrics_table = input.bool(false, "Show Metrics Table", group=group_visual, tooltip="Display real-time tape reading metrics in a table")
-color_aggressive_buy = input.color(color.new(color.green, 0), "Aggressive Buy", group=group_visual)
-color_aggressive_sell = input.color(color.new(color.red, 0), "Aggressive Sell", group=group_visual)
-color_absorption = input.color(color.new(color.blue, 0), "Absorption", group=group_visual)
-color_exhaustion = input.color(color.new(color.orange, 0), "Exhaustion", group=group_visual)
-color_delta_buy = input.color(color.new(color.lime, 60), "Delta Buy Pressure", group=group_visual)
-color_delta_sell = input.color(color.new(color.maroon, 60), "Delta Sell Pressure", group=group_visual)
+show_backgrounds = input.bool(false, "Show Background Highlights", group=group_visual, tooltip="Highlight absorption zones (98% transparency)")
+show_metrics_table = input.bool(false, "Show Metrics Table", group=group_visual, tooltip="Display compact metrics (top-right corner)")
+
+// Histogram Settings
+histogram_scale = input.float(0.35, "Histogram Scale", minval=0.1, maxval=1.0, step=0.05, group=group_visual, tooltip="Scale down histogram size (0.35 = 35% of full scale)")
+histogram_transparency = input.int(75, "Histogram Transparency", minval=0, maxval=95, step=5, group=group_visual, tooltip="Higher = more transparent (75 recommended)")
+show_histogram_sma = input.bool(true, "Show Histogram SMA", group=group_visual, tooltip="Overlay trend line on delta histogram")
+histogram_sma_length = input.int(10, "Histogram SMA Length", minval=3, maxval=50, group=group_visual, tooltip="Period for histogram trend line")
+
+// Signal Colors (optimized contrast)
+color_aggressive_buy = input.color(color.new(#00ff00, 0), "Aggressive Buy", group=group_visual)
+color_aggressive_sell = input.color(color.new(#ff0000, 0), "Aggressive Sell", group=group_visual)
+color_absorption = input.color(color.new(#2196F3, 0), "Absorption", group=group_visual)
+color_exhaustion = input.color(color.new(#ff9800, 0), "Exhaustion", group=group_visual)
+color_delta_buy = input.color(color.new(#00ff00, 0), "Delta Buy", group=group_visual)
+color_delta_sell = input.color(color.new(#ff1744, 0), "Delta Sell", group=group_visual)
+color_histogram_sma = input.color(color.new(color.yellow, 0), "Histogram SMA", group=group_visual)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CORE TAPE READING CALCULATIONS
@@ -198,107 +209,137 @@ if show_candle_colors
 barcolor(candle_color, title="Tape Reading Candle Color")
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BACKGROUND HIGHLIGHTS
+// BACKGROUND HIGHLIGHTS (98% transparency - very subtle)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-bgcolor(show_backgrounds and show_absorption_only ? color.new(color.blue, 97) : na, title="Absorption Zone")
-bgcolor(show_backgrounds and show_exhaustion_only ? color.new(color.orange, 97) : na, title="Exhaustion Warning")
+// Only highlight absorption zones (most important for preparation phase)
+bgcolor(show_backgrounds and show_absorption_only ? color.new(color.blue, 98) : na, title="Absorption Zone")
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// VOLUME DELTA HISTOGRAM
+// VOLUME DELTA HISTOGRAM (Optimized: Scaled down, increased transparency)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Normalize delta for histogram display
-delta_normalized = volume_delta / ta.highest(math.abs(volume_delta), 50) * 100
-histogram_color = volume_delta > 0 ? color_delta_buy : color_delta_sell
+delta_normalized_full = volume_delta / ta.highest(math.abs(volume_delta), 50) * 100
 
-// Plot only if enabled (use na to hide)
-plot(show_delta_histogram ? delta_normalized : na, title="Volume Delta", style=plot.style_histogram, color=histogram_color, linewidth=2)
-hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed)
+// Apply user-defined scaling (default 35% of full size)
+delta_normalized = delta_normalized_full * histogram_scale
+
+// Calculate SMA of delta for trend overlay
+delta_sma = ta.sma(delta_normalized, histogram_sma_length)
+
+// Apply transparency to histogram colors
+histogram_color_buy = color.new(color_delta_buy, histogram_transparency)
+histogram_color_sell = color.new(color_delta_sell, histogram_transparency)
+histogram_color = volume_delta > 0 ? histogram_color_buy : histogram_color_sell
+
+// Plot histogram (scaled and transparent)
+plot(show_delta_histogram ? delta_normalized : na,
+     title="Volume Delta Histogram",
+     style=plot.style_histogram,
+     color=histogram_color,
+     linewidth=1)
+
+// Plot SMA overlay on histogram (trend line)
+plot(show_delta_histogram and show_histogram_sma ? delta_sma : na,
+     title="Delta Trend (SMA)",
+     color=color_histogram_sma,
+     linewidth=2,
+     style=plot.style_line)
+
+// Zero reference line (subtle)
+hline(0, "Zero Line", color=color.new(color.gray, 70), linestyle=hline.style_dotted)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// LABELS & SIGNALS
+// LABELS & SIGNALS (Optimized: Smaller size, better positioning, increased transparency)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 show_label_display = signal_display_mode == "Labels Only" or signal_display_mode == "Both"
 show_shape_display = signal_display_mode == "Shapes Only" or signal_display_mode == "Both"
 
-// LABELS (only show highest priority signal per bar)
+// Calculate vertical offset for better positioning (avoid candle overlap)
+label_offset_atr = ta.atr(14) * 0.3
+
+// LABELS (only show highest priority signal per bar - with vertical offset)
 if show_label_display and show_labels
     // Exhaustion (Highest Priority)
     if show_exhaustion_only
-        label.new(bar_index, high, "EXH",
+        label.new(bar_index, high + label_offset_atr, "EXH",
                   style=label.style_label_down,
-                  color=color_exhaustion,
+                  color=color.new(color_exhaustion, 20),
                   textcolor=color.white,
-                  size=size.normal,
-                  tooltip="⚠️ EXHAUSTION WARNING\nExtreme Volume: " + str.tostring(volume_ratio, "#.##") + "x average\nWatch for reversal in next 1-3 bars")
+                  size=size.small,
+                  tooltip="⚠️ EXHAUSTION\nVolume: " + str.tostring(volume_ratio, "#.##") + "x\nWatch for reversal")
 
     // Aggressive Sell (2nd Priority)
     else if show_aggressive_sell_only
-        label.new(bar_index, high, "SELL",
+        label.new(bar_index, high + label_offset_atr, "SELL",
                   style=label.style_label_down,
-                  color=color_aggressive_sell,
+                  color=color.new(color_aggressive_sell, 20),
                   textcolor=color.white,
-                  size=size.normal,
-                  tooltip="🔴 AGGRESSIVE SELLING\nInitiative Score: " + str.tostring(initiative_score, "#.##") +
-                          "\nVolume Ratio: " + str.tostring(volume_ratio, "#.##") + "x")
+                  size=size.small,
+                  tooltip="🔴 AGGRESSIVE SELL\nScore: " + str.tostring(initiative_score, "#.##") +
+                          "\nVol: " + str.tostring(volume_ratio, "#.##") + "x")
 
     // Aggressive Buy (3rd Priority)
     else if show_aggressive_buy_only
-        label.new(bar_index, low, "BUY",
+        label.new(bar_index, low - label_offset_atr, "BUY",
                   style=label.style_label_up,
-                  color=color_aggressive_buy,
-                  textcolor=color.white,
-                  size=size.normal,
-                  tooltip="🟢 AGGRESSIVE BUYING\nInitiative Score: " + str.tostring(initiative_score, "#.##") +
-                          "\nVolume Ratio: " + str.tostring(volume_ratio, "#.##") + "x")
-
-    // Absorption (Lowest Priority)
-    else if show_absorption_only
-        label.new(bar_index, high, "ABS",
-                  style=label.style_label_down,
-                  color=color_absorption,
+                  color=color.new(color_aggressive_buy, 20),
                   textcolor=color.white,
                   size=size.small,
-                  tooltip="🔵 ABSORPTION ZONE\nHigh Volume + Narrow Range\nAbsorption Ratio: " + str.tostring(absorption_normalized, "#.##") +
-                          "\nSmart Money positioning")
+                  tooltip="🟢 AGGRESSIVE BUY\nScore: " + str.tostring(initiative_score, "#.##") +
+                          "\nVol: " + str.tostring(volume_ratio, "#.##") + "x")
+
+    // Absorption (Lowest Priority) - tiny label
+    else if show_absorption_only
+        label.new(bar_index, high + label_offset_atr, "ABS",
+                  style=label.style_label_down,
+                  color=color.new(color_absorption, 30),
+                  textcolor=color.white,
+                  size=size.tiny,
+                  tooltip="🔵 ABSORPTION\nRatio: " + str.tostring(absorption_normalized, "#.##") +
+                          "\nSmart Money zone")
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SHAPES (only show highest priority signal per bar)
+// SHAPES (Optimized: Clear icons, proper sizing, no text overlap)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Exhaustion: X mark (size.normal) - most important signal
 plotshape(show_shape_display and show_exhaustion_only and show_exhaustion,
-          title="Exhaustion Signal",
+          title="Exhaustion",
           style=shape.xcross,
           location=location.abovebar,
           color=color_exhaustion,
           size=size.normal,
-          text="EXH")
+          text="")
 
+// Aggressive Sell: Triangle down (size.small) - clear directional signal
 plotshape(show_shape_display and show_aggressive_sell_only and show_aggressive,
-          title="Aggressive Sell Signal",
+          title="Aggressive Sell",
           style=shape.triangledown,
           location=location.abovebar,
           color=color_aggressive_sell,
-          size=size.normal,
-          text="SELL")
+          size=size.small,
+          text="")
 
+// Aggressive Buy: Triangle up (size.small) - clear directional signal
 plotshape(show_shape_display and show_aggressive_buy_only and show_aggressive,
-          title="Aggressive Buy Signal",
+          title="Aggressive Buy",
           style=shape.triangleup,
           location=location.belowbar,
           color=color_aggressive_buy,
-          size=size.normal,
-          text="BUY")
+          size=size.small,
+          text="")
 
+// Absorption: Small circle (size.tiny) - subtle preparation signal
 plotshape(show_shape_display and show_absorption_only and show_absorption,
-          title="Absorption Signal",
-          style=shape.diamond,
+          title="Absorption",
+          style=shape.circle,
           location=location.abovebar,
           color=color_absorption,
-          size=size.small,
-          text="ABS")
+          size=size.tiny,
+          text="")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ALERT CONDITIONS
@@ -310,45 +351,38 @@ alertcondition(is_strong_absorption, title="Absorption Zone", message="Tape Read
 alertcondition(show_exhaustion_signal, title="Exhaustion Warning", message="Tape Reading: EXHAUSTION warning - Extreme volume detected, watch for reversal")
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TABLE: REAL-TIME METRICS DISPLAY
+// TABLE: COMPACT METRICS (Optimized: 4 critical metrics, 90% transparency, smaller size)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 if show_metrics_table and barstate.islast
-    var table metrics_table = table.new(position.top_right, 2, 7, border_width=1)
+    // Compact table: 2 columns x 5 rows (header + 4 metrics)
+    var table metrics_table = table.new(position.top_right, 2, 5, border_width=1)
 
-    // Header
-    table.cell(metrics_table, 0, 0, "Metric", bgcolor=color.gray, text_color=color.white, text_size=size.small)
-    table.cell(metrics_table, 1, 0, "Value", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    // Header (90% transparent background)
+    table.cell(metrics_table, 0, 0, "Metric", bgcolor=color.new(color.gray, 90), text_color=color.white, text_size=size.tiny)
+    table.cell(metrics_table, 1, 0, "Value", bgcolor=color.new(color.gray, 90), text_color=color.white, text_size=size.tiny)
 
-    // Volume Ratio
-    table.cell(metrics_table, 0, 1, "Volume Ratio", text_size=size.small)
-    table.cell(metrics_table, 1, 1, str.tostring(volume_ratio, "#.##"),
-               bgcolor=volume_ratio > high_volume_threshold ? color.new(color.green, 80) : na, text_size=size.small)
+    // 1. Volume Ratio (most important - shows if high volume)
+    table.cell(metrics_table, 0, 1, "Vol Ratio", text_size=size.tiny, bgcolor=color.new(color.gray, 95))
+    vol_bg = volume_ratio > high_volume_threshold ? color.new(color.green, 85) : color.new(color.gray, 95)
+    table.cell(metrics_table, 1, 1, str.tostring(volume_ratio, "#.#") + "x", bgcolor=vol_bg, text_size=size.tiny)
 
-    // Initiative Score
-    table.cell(metrics_table, 0, 2, "Initiative Score", text_size=size.small)
-    table.cell(metrics_table, 1, 2, str.tostring(initiative_score, "#.##"),
-               bgcolor=initiative_score > initiative_threshold ? color.new(color.yellow, 80) : na, text_size=size.small)
+    // 2. Initiative Score (shows aggressive orders)
+    table.cell(metrics_table, 0, 2, "Initiative", text_size=size.tiny, bgcolor=color.new(color.gray, 95))
+    init_bg = initiative_score > initiative_threshold ? color.new(color.yellow, 85) : color.new(color.gray, 95)
+    table.cell(metrics_table, 1, 2, str.tostring(initiative_score, "#.#"), bgcolor=init_bg, text_size=size.tiny)
 
-    // Absorption Ratio
-    table.cell(metrics_table, 0, 3, "Absorption Ratio", text_size=size.small)
-    table.cell(metrics_table, 1, 3, str.tostring(absorption_normalized, "#.##"),
-               bgcolor=absorption_normalized > absorption_sensitivity ? color.new(color.blue, 80) : na, text_size=size.small)
+    // 3. Tape State (current signal)
+    tape_state = show_exhaustion_signal ? "EXHAUST" : is_aggressive_buy ? "BUY" : is_aggressive_sell ? "SELL" : is_strong_absorption ? "ABSORB" : "NEUTRAL"
+    state_color = show_exhaustion_signal ? color.new(color.orange, 85) : is_aggressive_buy ? color.new(color.green, 85) : is_aggressive_sell ? color.new(color.red, 85) : is_strong_absorption ? color.new(color.blue, 85) : color.new(color.gray, 95)
+    table.cell(metrics_table, 0, 3, "State", text_size=size.tiny, bgcolor=color.new(color.gray, 95))
+    table.cell(metrics_table, 1, 3, tape_state, bgcolor=state_color, text_size=size.tiny)
 
-    // Volume Delta
-    table.cell(metrics_table, 0, 4, "Volume Delta", text_size=size.small)
-    delta_color = volume_delta > 0 ? color.new(color.green, 80) : color.new(color.red, 80)
-    table.cell(metrics_table, 1, 4, str.tostring(volume_delta, "#"), bgcolor=delta_color, text_size=size.small)
-
-    // Price Velocity
-    table.cell(metrics_table, 0, 5, "Price Velocity", text_size=size.small)
-    table.cell(metrics_table, 1, 5, str.tostring(price_velocity, "#.####"), text_size=size.small)
-
-    // Current Tape State
-    tape_state = is_aggressive_buy ? "AGG BUY" : is_aggressive_sell ? "AGG SELL" : is_strong_absorption ? "ABSORPTION" : show_exhaustion_signal ? "EXHAUSTION" : "NEUTRAL"
-    state_color = is_aggressive_buy ? color.new(color.green, 70) : is_aggressive_sell ? color.new(color.red, 70) : is_strong_absorption ? color.new(color.blue, 70) : show_exhaustion_signal ? color.new(color.orange, 70) : na
-    table.cell(metrics_table, 0, 6, "Tape State", text_size=size.small)
-    table.cell(metrics_table, 1, 6, tape_state, bgcolor=state_color, text_size=size.small)
+    // 4. Delta Direction (simplified: BUY/SELL pressure)
+    delta_dir = volume_delta > 0 ? "BUY +" : "SELL -"
+    delta_bg = volume_delta > 0 ? color.new(color.green, 85) : color.new(color.red, 85)
+    table.cell(metrics_table, 0, 4, "Delta", text_size=size.tiny, bgcolor=color.new(color.gray, 95))
+    table.cell(metrics_table, 1, 4, delta_dir, bgcolor=delta_bg, text_size=size.tiny)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EXPLANATION & USAGE NOTES (visible in indicator info)

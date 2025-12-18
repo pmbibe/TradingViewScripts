@@ -45,8 +45,8 @@ absorption_lookback = input.int(3, "Absorption Lookback", minval=1, maxval=10, g
 
 // === INITIATIVE PARAMETERS ===
 group_initiative = "═══ INITIATIVE PARAMETERS ═══"
-initiative_threshold = input.float(1.5, "Initiative Score Threshold", minval=1.0, maxval=3.0, step=0.1, group=initiative, tooltip="Minimum score to flag aggressive orders (combines body strength with volume)")
-velocity_lookback = input.int(5, "Price Velocity Lookback", minval=3, maxval=20, group=initiative, tooltip="Period to measure price movement speed")
+initiative_threshold = input.float(1.5, "Initiative Score Threshold", minval=1.0, maxval=3.0, step=0.1, group=group_initiative, tooltip="Minimum score to flag aggressive orders (combines body strength with volume)")
+velocity_lookback = input.int(5, "Price Velocity Lookback", minval=3, maxval=20, group=group_initiative, tooltip="Period to measure price movement speed")
 
 // === EXHAUSTION PARAMETERS ===
 group_exhaustion = "═══ EXHAUSTION PARAMETERS ═══"
@@ -162,7 +162,7 @@ show_exhaustion_signal = show_exhaustion and is_exhaustion_warning
 // CANDLE COLORING
 // ═══════════════════════════════════════════════════════════════════════════════
 
-candle_color = na(color)
+candle_color = color(na)
 
 if show_candle_colors
     if is_aggressive_buy
@@ -187,13 +187,13 @@ bgcolor(show_exhaustion_signal and show_exhaustion ? color.new(color.orange, 95)
 // VOLUME DELTA HISTOGRAM
 // ═══════════════════════════════════════════════════════════════════════════════
 
-if show_delta_histogram
-    // Normalize delta for histogram display
-    delta_normalized = volume_delta / ta.highest(math.abs(volume_delta), 50) * 100
-    histogram_color = volume_delta > 0 ? color_delta_buy : color_delta_sell
+// Normalize delta for histogram display
+delta_normalized = volume_delta / ta.highest(math.abs(volume_delta), 50) * 100
+histogram_color = volume_delta > 0 ? color_delta_buy : color_delta_sell
 
-    plot(delta_normalized, title="Volume Delta", style=plot.style_histogram, color=histogram_color, linewidth=2, display=display.pane)
-    hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed, display=display.pane)
+// Plot only if enabled (use na to hide)
+plot(show_delta_histogram ? delta_normalized : na, title="Volume Delta", style=plot.style_histogram, color=histogram_color, linewidth=2)
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // LABELS & SIGNALS

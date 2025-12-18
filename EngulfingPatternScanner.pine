@@ -1,0 +1,687 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TradingView Scripts
+
+//@version=6
+indicator("Engulfing Candlestick Pattern Scanner", shorttitle="ENG Scanner", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ███████╗███╗   ██╗ ██████╗ ██╗   ██╗██╗     ███████╗██╗███╗   ██╗ ██████╗
+// ██╔════╝████╗  ██║██╔════╝ ██║   ██║██║     ██╔════╝██║████╗  ██║██╔════╝
+// █████╗  ██╔██╗ ██║██║  ███╗██║   ██║██║     █████╗  ██║██╔██╗ ██║██║  ███╗
+// ██╔══╝  ██║╚██╗██║██║   ██║██║   ██║██║     ██╔══╝  ██║██║╚██╗██║██║   ██║
+// ███████╗██║ ╚████║╚██████╔╝╚██████╔╝███████╗██║     ██║██║ ╚████║╚██████╔╝
+// ╚══════╝╚═╝  ╚═══╝ ╚═════╝  ╚═════╝ ╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝ ╚═════╝
+// Pattern Scanner with Volume Confirmation & Trend Context
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Pattern Settings
+group_pattern = "══════ Pattern Settings ══════"
+min_body_ratio = input.float(60.0, "Min Body Ratio (%)", minval=30.0, maxval=95.0, step=5.0, group=group_pattern, tooltip="Minimum body percentage of engulfing candle (body/total range)")
+require_small_wicks = input.bool(true, "Require Small Wicks", group=group_pattern, tooltip="Require wicks to be small relative to body")
+wick_max_ratio = input.float(0.2, "Max Wick Ratio", minval=0.1, maxval=0.5, step=0.05, group=group_pattern, tooltip="Maximum wick size relative to body")
+
+// Volume Settings
+group_volume = "══════ Volume Settings ══════"
+volume_multiplier = input.float(1.5, "Volume Multiplier", minval=1.0, maxval=5.0, step=0.1, group=group_volume, tooltip="Volume must be >= this x average volume")
+volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=50, group=group_volume)
+
+// Trend Context
+group_trend = "══════ Trend Context ══════"
+require_trend_context = input.bool(true, "Require Trend Context", group=group_trend, tooltip="Only signal when pattern aligns with context")
+ema_fast_length = input.int(20, "EMA Fast", minval=5, maxval=50, group=group_trend)
+ema_slow_length = input.int(50, "EMA Slow", minval=20, maxval=200, group=group_trend)
+lookback_context = input.int(5, "Lookback for Context", minval=3, maxval=20, group=group_trend, tooltip="Number of bars to check price direction")
+
+// Entry Settings
+group_entry = "══════ Entry Settings ══════"
+show_aggressive_entry = input.bool(true, "Show Aggressive Entry", group=group_entry)
+show_conservative_entry = input.bool(true, "Show Conservative Entry", group=group_entry)
+target_rr_1 = input.float(1.5, "Target 1 R:R", minval=1.0, maxval=5.0, step=0.5, group=group_entry)
+target_rr_2 = input.float(2.5, "Target 2 R:R", minval=1.5, maxval=10.0, step=0.5, group=group_entry)
+stop_buffer_pct = input.float(10.0, "Stop Buffer (%)", minval=0.0, maxval=50.0, step=5.0, group=group_entry, tooltip="Extra buffer below/above pattern for stop loss")
+
+// Visualization
+group_visual = "══════ Visualization ══════"
+show_pattern_labels = input.bool(true, "Show Pattern Labels", group=group_visual)
+show_entry_arrows = input.bool(true, "Show Entry Arrows", group=group_visual)
+show_sl_tp_lines = input.bool(true, "Show SL/TP Lines", group=group_visual)
+sl_tp_line_length = input.int(10, "SL/TP Line Length", minval=5, maxval=50, group=group_visual)
+show_dashboard = input.bool(true, "Show Dashboard", group=group_visual)
+dashboard_position = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=group_visual)
+
+// Colors
+group_colors = "══════ Colors ══════"
+bullish_color = input.color(color.new(color.green, 0), "Bullish Color", group=group_colors)
+bearish_color = input.color(color.new(color.red, 0), "Bearish Color", group=group_colors)
+bullish_bg_color = input.color(color.new(color.green, 80), "Bullish Background", group=group_colors)
+bearish_bg_color = input.color(color.new(color.red, 80), "Bearish Background", group=group_colors)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALCULATIONS - Step 1: Candle Properties
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Current candle (engulfing candle)
+current_body = math.abs(close - open)
+current_total = high - low
+current_body_ratio = current_total > 0 ? (current_body / current_total) * 100 : 0
+is_green = close > open
+is_red = close < open
+
+// Previous candle (engulfed candle)
+prev_body = math.abs(close[1] - open[1])
+prev_total = high[1] - low[1]
+prev_is_green = close[1] > open[1]
+prev_is_red = close[1] < open[1]
+
+// Size ratio
+size_ratio = prev_body > 0 ? current_body / prev_body : 0
+
+// Wick calculations for green candle
+upper_wick_green = high - close
+lower_wick_green = open - low
+
+// Wick calculations for red candle
+upper_wick_red = high - open
+lower_wick_red = close - low
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALCULATIONS - Step 2: Volume Analysis
+// ─────────────────────────────────────────────────────────────────────────────
+
+volume_ma = ta.sma(volume, volume_ma_length)
+current_volume_ratio = volume_ma > 0 ? volume / volume_ma : 0
+has_sufficient_volume = current_volume_ratio >= volume_multiplier
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALCULATIONS - Step 3: Trend Context
+// ─────────────────────────────────────────────────────────────────────────────
+
+ema_fast_val = ta.ema(close, ema_fast_length)
+ema_slow_val = ta.ema(close, ema_slow_length)
+
+in_uptrend = ema_fast_val > ema_slow_val and close > ema_fast_val
+in_downtrend = ema_fast_val < ema_slow_val and close < ema_fast_val
+in_sideways = not in_uptrend and not in_downtrend
+
+// Price direction check
+price_declining = close[2] < close[lookback_context]
+price_rising = close[2] > close[lookback_context]
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALCULATIONS - Step 4: Bullish Engulfing Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Basic engulfing condition
+bullish_engulf_condition = is_green and                    // Current candle is green
+                           prev_is_red and                 // Previous candle is red
+                           open <= close[1] and            // Open <= prev Close
+                           close >= open[1] and            // Close >= prev Open
+                           current_body > prev_body        // Body is larger
+
+// Strong body requirement
+bullish_strong_body = current_body_ratio >= min_body_ratio
+
+// Small wicks requirement for green candle
+bullish_small_wicks = not require_small_wicks or
+                      (upper_wick_green < current_body * wick_max_ratio and
+                       lower_wick_green < current_body * wick_max_ratio)
+
+// Context validation for bullish (reversal at bottom)
+bullish_valid_context = not require_trend_context or
+                        in_downtrend or
+                        price_declining or
+                        in_sideways
+
+// Final bullish engulfing signal
+is_bullish_engulfing = bullish_engulf_condition and
+                       bullish_strong_body and
+                       bullish_small_wicks and
+                       has_sufficient_volume and
+                       bullish_valid_context
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALCULATIONS - Step 5: Bearish Engulfing Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Basic engulfing condition
+bearish_engulf_condition = is_red and                      // Current candle is red
+                           prev_is_green and               // Previous candle is green
+                           open >= close[1] and            // Open >= prev Close
+                           close <= open[1] and            // Close <= prev Open
+                           current_body > prev_body        // Body is larger
+
+// Strong body requirement
+bearish_strong_body = current_body_ratio >= min_body_ratio
+
+// Small wicks requirement for red candle
+bearish_small_wicks = not require_small_wicks or
+                      (upper_wick_red < current_body * wick_max_ratio and
+                       lower_wick_red < current_body * wick_max_ratio)
+
+// Context validation for bearish (reversal at top)
+bearish_valid_context = not require_trend_context or
+                        in_uptrend or
+                        price_rising or
+                        in_sideways
+
+// Final bearish engulfing signal
+is_bearish_engulfing = bearish_engulf_condition and
+                       bearish_strong_body and
+                       bearish_small_wicks and
+                       has_sufficient_volume and
+                       bearish_valid_context
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALCULATIONS - Step 6: Pattern Strength
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Calculate pattern strength
+calc_pattern_strength(is_bullish, is_bearish, size_r, vol_r, body_r) =>
+    float strength = 0.0
+
+    // Size ratio points (max 30)
+    if size_r > 3
+        strength += 30
+    else if size_r > 2
+        strength += 20
+    else
+        strength += 10
+
+    // Volume points (max 30)
+    if vol_r > 3
+        strength += 30
+    else if vol_r > 2
+        strength += 20
+    else
+        strength += 10
+
+    // Body ratio points (max 20)
+    if body_r > 80
+        strength += 20
+    else if body_r > 70
+        strength += 15
+    else
+        strength += 10
+
+    // Trend alignment points (max 20) - counter-trend reversals are stronger
+    if (is_bullish and in_downtrend) or (is_bearish and in_uptrend)
+        strength += 20
+    else if in_sideways
+        strength += 10
+
+    // Wick size points (max 20) - smaller wicks = stronger
+    float total_wick = 0.0
+    if is_bullish
+        total_wick := upper_wick_green + lower_wick_green
+    else if is_bearish
+        total_wick := upper_wick_red + lower_wick_red
+
+    float wick_r = current_body > 0 ? total_wick / current_body : 1.0
+    if wick_r < 0.1
+        strength += 20
+    else if wick_r < 0.3
+        strength += 10
+
+    math.min(strength, 100)
+
+// Count consecutive candles before pattern
+count_consecutive_candles(is_bullish) =>
+    int count = 0
+    if is_bullish
+        // Count consecutive red candles before bullish engulfing
+        for i = 1 to 5
+            if close[i] < open[i]
+                count += 1
+            else
+                break
+    else
+        // Count consecutive green candles before bearish engulfing
+        for i = 1 to 5
+            if close[i] > open[i]
+                count += 1
+            else
+                break
+    count
+
+// Calculate strength
+var float pattern_strength = 0.0
+var int consecutive_count = 0
+
+if is_bullish_engulfing
+    pattern_strength := calc_pattern_strength(true, false, size_ratio, current_volume_ratio, current_body_ratio)
+    consecutive_count := count_consecutive_candles(true)
+    pattern_strength := math.min(pattern_strength + consecutive_count * 5, 100)
+else if is_bearish_engulfing
+    pattern_strength := calc_pattern_strength(false, true, size_ratio, current_volume_ratio, current_body_ratio)
+    consecutive_count := count_consecutive_candles(false)
+    pattern_strength := math.min(pattern_strength + consecutive_count * 5, 100)
+else
+    pattern_strength := 0
+    consecutive_count := 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALCULATIONS - Entry, Stop Loss, Targets
+// ─────────────────────────────────────────────────────────────────────────────
+
+pattern_height = high - low
+stop_buffer = pattern_height * (stop_buffer_pct / 100)
+
+// Bullish entries
+var float bullish_entry_agg = na
+var float bullish_stop = na
+var float bullish_target1 = na
+var float bullish_target2 = na
+var float bullish_risk = na
+
+if is_bullish_engulfing
+    bullish_entry_agg := close
+    bullish_stop := low - stop_buffer
+    bullish_risk := bullish_entry_agg - bullish_stop
+    bullish_target1 := bullish_entry_agg + bullish_risk * target_rr_1
+    bullish_target2 := bullish_entry_agg + bullish_risk * target_rr_2
+
+// Bearish entries
+var float bearish_entry_agg = na
+var float bearish_stop = na
+var float bearish_target1 = na
+var float bearish_target2 = na
+var float bearish_risk = na
+
+if is_bearish_engulfing
+    bearish_entry_agg := close
+    bearish_stop := high + stop_buffer
+    bearish_risk := bearish_stop - bearish_entry_agg
+    bearish_target1 := bearish_entry_agg - bearish_risk * target_rr_1
+    bearish_target2 := bearish_entry_agg - bearish_risk * target_rr_2
+
+// Conservative entry tracking
+var float prev_engulf_high = na
+var float prev_engulf_low = na
+var bool was_bullish_engulf = false
+var bool was_bearish_engulf = false
+
+if is_bullish_engulfing
+    prev_engulf_high := high
+    was_bullish_engulf := true
+    was_bearish_engulf := false
+else if is_bearish_engulfing
+    prev_engulf_low := low
+    was_bearish_engulf := true
+    was_bullish_engulf := false
+
+// Conservative entry signals (break of engulfing high/low)
+long_conservative = was_bullish_engulf[1] and close > prev_engulf_high[1] and not is_bullish_engulfing
+short_conservative = was_bearish_engulf[1] and close < prev_engulf_low[1] and not is_bearish_engulfing
+
+// Reset tracking after conservative signal
+if long_conservative
+    was_bullish_engulf := false
+if short_conservative
+    was_bearish_engulf := false
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISUALIZATION - Background Highlighting
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Highlight engulfing pattern candles
+bgcolor(is_bullish_engulfing ? color.new(bullish_color, 80) : na)
+bgcolor(is_bullish_engulfing[1] and is_bullish_engulfing[0] == false ? color.new(bullish_color, 85) : na, offset=-1)
+
+bgcolor(is_bearish_engulfing ? color.new(bearish_color, 80) : na)
+bgcolor(is_bearish_engulfing[1] and is_bearish_engulfing[0] == false ? color.new(bearish_color, 85) : na, offset=-1)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISUALIZATION - Pattern Labels
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Strength grade
+get_grade(strength) =>
+    if strength >= 90
+        "A+"
+    else if strength >= 80
+        "A"
+    else if strength >= 70
+        "B+"
+    else if strength >= 60
+        "B"
+    else if strength >= 50
+        "C"
+    else
+        "D"
+
+// Position size recommendation
+get_position_size(strength) =>
+    if strength >= 80
+        "FULL"
+    else if strength >= 60
+        "HALF"
+    else
+        "QUARTER"
+
+if show_pattern_labels and is_bullish_engulfing
+    grade = get_grade(pattern_strength)
+    pos_size = get_position_size(pattern_strength)
+    label_text = "BULL ENG\n" + str.tostring(pattern_strength, "#") + "% [" + grade + "]\n" + pos_size
+    label.new(bar_index, high, label_text,
+              style=label.style_label_down,
+              color=color.new(bullish_color, 20),
+              textcolor=color.white,
+              size=size.normal)
+
+if show_pattern_labels and is_bearish_engulfing
+    grade = get_grade(pattern_strength)
+    pos_size = get_position_size(pattern_strength)
+    label_text = "BEAR ENG\n" + str.tostring(pattern_strength, "#") + "% [" + grade + "]\n" + pos_size
+    label.new(bar_index, low, label_text,
+              style=label.style_label_up,
+              color=color.new(bearish_color, 20),
+              textcolor=color.white,
+              size=size.normal)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISUALIZATION - Entry Arrows
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Aggressive entry arrows
+if show_entry_arrows and show_aggressive_entry and is_bullish_engulfing
+    label.new(bar_index, low - pattern_height * 0.3, "LONG\nAGG",
+              style=label.style_label_up,
+              color=color.lime,
+              textcolor=color.black,
+              size=size.small)
+
+if show_entry_arrows and show_aggressive_entry and is_bearish_engulfing
+    label.new(bar_index, high + pattern_height * 0.3, "SHORT\nAGG",
+              style=label.style_label_down,
+              color=color.red,
+              textcolor=color.white,
+              size=size.small)
+
+// Conservative entry arrows
+if show_entry_arrows and show_conservative_entry and long_conservative
+    label.new(bar_index, low - (high - low) * 0.3, "LONG\nCONF",
+              style=label.style_label_up,
+              color=color.green,
+              textcolor=color.white,
+              size=size.small)
+
+if show_entry_arrows and show_conservative_entry and short_conservative
+    label.new(bar_index, high + (high - low) * 0.3, "SHORT\nCONF",
+              style=label.style_label_down,
+              color=color.maroon,
+              textcolor=color.white,
+              size=size.small)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISUALIZATION - Stop Loss & Target Lines
+// ─────────────────────────────────────────────────────────────────────────────
+
+if show_sl_tp_lines and is_bullish_engulfing
+    // Stop loss line
+    line.new(bar_index, bullish_stop, bar_index + sl_tp_line_length, bullish_stop,
+             color=color.red, width=2, style=line.style_dashed)
+    label.new(bar_index + sl_tp_line_length, bullish_stop, "SL " + str.tostring(bullish_stop, "#.####"),
+              style=label.style_label_left, color=color.red, textcolor=color.white, size=size.tiny)
+
+    // Target 1 line
+    line.new(bar_index, bullish_target1, bar_index + sl_tp_line_length, bullish_target1,
+             color=color.green, width=1, style=line.style_dotted)
+    label.new(bar_index + sl_tp_line_length, bullish_target1, "T1 " + str.tostring(bullish_target1, "#.####"),
+              style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+
+    // Target 2 line
+    line.new(bar_index, bullish_target2, bar_index + sl_tp_line_length, bullish_target2,
+             color=color.teal, width=1, style=line.style_dotted)
+    label.new(bar_index + sl_tp_line_length, bullish_target2, "T2 " + str.tostring(bullish_target2, "#.####"),
+              style=label.style_label_left, color=color.teal, textcolor=color.white, size=size.tiny)
+
+if show_sl_tp_lines and is_bearish_engulfing
+    // Stop loss line
+    line.new(bar_index, bearish_stop, bar_index + sl_tp_line_length, bearish_stop,
+             color=color.red, width=2, style=line.style_dashed)
+    label.new(bar_index + sl_tp_line_length, bearish_stop, "SL " + str.tostring(bearish_stop, "#.####"),
+              style=label.style_label_left, color=color.red, textcolor=color.white, size=size.tiny)
+
+    // Target 1 line
+    line.new(bar_index, bearish_target1, bar_index + sl_tp_line_length, bearish_target1,
+             color=color.green, width=1, style=line.style_dotted)
+    label.new(bar_index + sl_tp_line_length, bearish_target1, "T1 " + str.tostring(bearish_target1, "#.####"),
+              style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+
+    // Target 2 line
+    line.new(bar_index, bearish_target2, bar_index + sl_tp_line_length, bearish_target2,
+             color=color.teal, width=1, style=line.style_dotted)
+    label.new(bar_index + sl_tp_line_length, bearish_target2, "T2 " + str.tostring(bearish_target2, "#.####"),
+              style=label.style_label_left, color=color.teal, textcolor=color.white, size=size.tiny)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISUALIZATION - EMA Lines
+// ─────────────────────────────────────────────────────────────────────────────
+
+plot(ema_fast_val, "EMA Fast", color=color.new(color.blue, 50), linewidth=1)
+plot(ema_slow_val, "EMA Slow", color=color.new(color.orange, 50), linewidth=1)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISUALIZATION - Dashboard
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Get dashboard position
+get_table_position(pos) =>
+    switch pos
+        "Top Right" => position.top_right
+        "Top Left" => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left" => position.bottom_left
+        => position.top_right
+
+var table dashboard = table.new(get_table_position(dashboard_position), 2, 12,
+                                 bgcolor=color.new(color.black, 80),
+                                 border_width=1,
+                                 border_color=color.gray)
+
+// Update dashboard
+if show_dashboard and barstate.islast
+    // Header
+    if is_bullish_engulfing
+        table.cell(dashboard, 0, 0, "PATTERN DETECTED", text_color=color.white,
+                   bgcolor=bullish_color, text_size=size.small)
+        table.cell(dashboard, 1, 0, "", bgcolor=bullish_color)
+    else if is_bearish_engulfing
+        table.cell(dashboard, 0, 0, "PATTERN DETECTED", text_color=color.white,
+                   bgcolor=bearish_color, text_size=size.small)
+        table.cell(dashboard, 1, 0, "", bgcolor=bearish_color)
+    else
+        table.cell(dashboard, 0, 0, "ENGULFING SCANNER", text_color=color.white,
+                   bgcolor=color.gray, text_size=size.small)
+        table.cell(dashboard, 1, 0, "", bgcolor=color.gray)
+
+    // Pattern type
+    table.cell(dashboard, 0, 1, "Type:", text_color=color.gray, text_size=size.tiny)
+    if is_bullish_engulfing
+        table.cell(dashboard, 1, 1, "BULLISH ENGULFING", text_color=bullish_color, text_size=size.tiny)
+    else if is_bearish_engulfing
+        table.cell(dashboard, 1, 1, "BEARISH ENGULFING", text_color=bearish_color, text_size=size.tiny)
+    else
+        table.cell(dashboard, 1, 1, "No Pattern", text_color=color.gray, text_size=size.tiny)
+
+    // Strength
+    table.cell(dashboard, 0, 2, "Strength:", text_color=color.gray, text_size=size.tiny)
+    strength_color = pattern_strength >= 70 ? color.green : pattern_strength >= 50 ? color.orange : color.gray
+    table.cell(dashboard, 1, 2, str.tostring(pattern_strength, "#") + "/100", text_color=strength_color, text_size=size.tiny)
+
+    // Size ratio
+    table.cell(dashboard, 0, 3, "Size Ratio:", text_color=color.gray, text_size=size.tiny)
+    display_size_ratio = (is_bullish_engulfing or is_bearish_engulfing) ? size_ratio : 0.0
+    table.cell(dashboard, 1, 3, str.tostring(display_size_ratio, "#.##") + "x", text_color=color.white, text_size=size.tiny)
+
+    // Volume ratio
+    table.cell(dashboard, 0, 4, "Volume:", text_color=color.gray, text_size=size.tiny)
+    vol_color = current_volume_ratio >= volume_multiplier ? color.green : color.orange
+    table.cell(dashboard, 1, 4, str.tostring(current_volume_ratio, "#.##") + "x", text_color=vol_color, text_size=size.tiny)
+
+    // Body ratio
+    table.cell(dashboard, 0, 5, "Body Ratio:", text_color=color.gray, text_size=size.tiny)
+    body_color = current_body_ratio >= min_body_ratio ? color.green : color.orange
+    table.cell(dashboard, 1, 5, str.tostring(current_body_ratio, "#.#") + "%", text_color=body_color, text_size=size.tiny)
+
+    // Trend
+    table.cell(dashboard, 0, 6, "Trend:", text_color=color.gray, text_size=size.tiny)
+    trend_text = in_uptrend ? "UPTREND" : in_downtrend ? "DOWNTREND" : "SIDEWAYS"
+    trend_color = in_uptrend ? color.green : in_downtrend ? color.red : color.yellow
+    table.cell(dashboard, 1, 6, trend_text, text_color=trend_color, text_size=size.tiny)
+
+    // Entry
+    table.cell(dashboard, 0, 7, "Entry:", text_color=color.gray, text_size=size.tiny)
+    if is_bullish_engulfing
+        table.cell(dashboard, 1, 7, str.tostring(bullish_entry_agg, "#.####"), text_color=color.white, text_size=size.tiny)
+    else if is_bearish_engulfing
+        table.cell(dashboard, 1, 7, str.tostring(bearish_entry_agg, "#.####"), text_color=color.white, text_size=size.tiny)
+    else
+        table.cell(dashboard, 1, 7, "-", text_color=color.gray, text_size=size.tiny)
+
+    // Stop loss
+    table.cell(dashboard, 0, 8, "Stop Loss:", text_color=color.gray, text_size=size.tiny)
+    if is_bullish_engulfing
+        table.cell(dashboard, 1, 8, str.tostring(bullish_stop, "#.####"), text_color=color.red, text_size=size.tiny)
+    else if is_bearish_engulfing
+        table.cell(dashboard, 1, 8, str.tostring(bearish_stop, "#.####"), text_color=color.red, text_size=size.tiny)
+    else
+        table.cell(dashboard, 1, 8, "-", text_color=color.gray, text_size=size.tiny)
+
+    // Target 1
+    table.cell(dashboard, 0, 9, "Target 1:", text_color=color.gray, text_size=size.tiny)
+    if is_bullish_engulfing
+        table.cell(dashboard, 1, 9, str.tostring(bullish_target1, "#.####"), text_color=color.green, text_size=size.tiny)
+    else if is_bearish_engulfing
+        table.cell(dashboard, 1, 9, str.tostring(bearish_target1, "#.####"), text_color=color.green, text_size=size.tiny)
+    else
+        table.cell(dashboard, 1, 9, "-", text_color=color.gray, text_size=size.tiny)
+
+    // Target 2
+    table.cell(dashboard, 0, 10, "Target 2:", text_color=color.gray, text_size=size.tiny)
+    if is_bullish_engulfing
+        table.cell(dashboard, 1, 10, str.tostring(bullish_target2, "#.####"), text_color=color.teal, text_size=size.tiny)
+    else if is_bearish_engulfing
+        table.cell(dashboard, 1, 10, str.tostring(bearish_target2, "#.####"), text_color=color.teal, text_size=size.tiny)
+    else
+        table.cell(dashboard, 1, 10, "-", text_color=color.gray, text_size=size.tiny)
+
+    // R:R Ratio
+    table.cell(dashboard, 0, 11, "R:R:", text_color=color.gray, text_size=size.tiny)
+    if is_bullish_engulfing and bullish_risk > 0
+        rr = (bullish_target1 - bullish_entry_agg) / bullish_risk
+        table.cell(dashboard, 1, 11, str.tostring(rr, "#.##") + ":1", text_color=color.green, text_size=size.tiny)
+    else if is_bearish_engulfing and bearish_risk > 0
+        rr = (bearish_entry_agg - bearish_target1) / bearish_risk
+        table.cell(dashboard, 1, 11, str.tostring(rr, "#.##") + ":1", text_color=color.green, text_size=size.tiny)
+    else
+        table.cell(dashboard, 1, 11, "-", text_color=color.gray, text_size=size.tiny)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATISTICS - Pattern Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+var int total_bullish = 0
+var int total_bearish = 0
+var float sum_bullish_strength = 0.0
+var float sum_bearish_strength = 0.0
+
+if is_bullish_engulfing
+    total_bullish += 1
+    sum_bullish_strength += pattern_strength
+
+if is_bearish_engulfing
+    total_bearish += 1
+    sum_bearish_strength += pattern_strength
+
+// Statistics table
+var table stats_table = table.new(position.bottom_right, 2, 5,
+                                   bgcolor=color.new(color.black, 85),
+                                   border_width=1,
+                                   border_color=color.gray)
+
+if show_dashboard and barstate.islast
+    avg_bull_strength = total_bullish > 0 ? sum_bullish_strength / total_bullish : 0
+    avg_bear_strength = total_bearish > 0 ? sum_bearish_strength / total_bearish : 0
+
+    table.cell(stats_table, 0, 0, "STATISTICS", text_color=color.white,
+               bgcolor=color.blue, text_size=size.tiny)
+    table.cell(stats_table, 1, 0, "", bgcolor=color.blue)
+
+    table.cell(stats_table, 0, 1, "Bull Patterns:", text_color=color.gray, text_size=size.tiny)
+    table.cell(stats_table, 1, 1, str.tostring(total_bullish), text_color=bullish_color, text_size=size.tiny)
+
+    table.cell(stats_table, 0, 2, "Bear Patterns:", text_color=color.gray, text_size=size.tiny)
+    table.cell(stats_table, 1, 2, str.tostring(total_bearish), text_color=bearish_color, text_size=size.tiny)
+
+    table.cell(stats_table, 0, 3, "Avg Bull Str:", text_color=color.gray, text_size=size.tiny)
+    table.cell(stats_table, 1, 3, str.tostring(avg_bull_strength, "#.#"), text_color=color.white, text_size=size.tiny)
+
+    table.cell(stats_table, 0, 4, "Avg Bear Str:", text_color=color.gray, text_size=size.tiny)
+    table.cell(stats_table, 1, 4, str.tostring(avg_bear_strength, "#.#"), text_color=color.white, text_size=size.tiny)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Bullish Engulfing Alert
+alertcondition(is_bullish_engulfing,
+               title="Bullish Engulfing Detected",
+               message="BULLISH ENGULFING detected on {{ticker}}!\nPrice: {{close}}\nTimeframe: {{interval}}")
+
+// Bearish Engulfing Alert
+alertcondition(is_bearish_engulfing,
+               title="Bearish Engulfing Detected",
+               message="BEARISH ENGULFING detected on {{ticker}}!\nPrice: {{close}}\nTimeframe: {{interval}}")
+
+// Conservative Long Entry Alert
+alertcondition(long_conservative,
+               title="Long Entry Confirmed",
+               message="LONG ENTRY CONFIRMED on {{ticker}}!\nBullish engulfing high broken.\nEntry at: {{close}}")
+
+// Conservative Short Entry Alert
+alertcondition(short_conservative,
+               title="Short Entry Confirmed",
+               message="SHORT ENTRY CONFIRMED on {{ticker}}!\nBearish engulfing low broken.\nEntry at: {{close}}")
+
+// High Strength Bullish Pattern
+alertcondition(is_bullish_engulfing and pattern_strength >= 80,
+               title="High Strength Bullish Engulfing",
+               message="HIGH STRENGTH (80+) BULLISH ENGULFING on {{ticker}}!\nStrength: " + str.tostring(pattern_strength) + "%\nPrice: {{close}}")
+
+// High Strength Bearish Pattern
+alertcondition(is_bearish_engulfing and pattern_strength >= 80,
+               title="High Strength Bearish Engulfing",
+               message="HIGH STRENGTH (80+) BEARISH ENGULFING on {{ticker}}!\nStrength: " + str.tostring(pattern_strength) + "%\nPrice: {{close}}")
+
+// Any Pattern Alert
+alertcondition(is_bullish_engulfing or is_bearish_engulfing,
+               title="Any Engulfing Pattern",
+               message="ENGULFING PATTERN detected on {{ticker}}!\nType: " + (is_bullish_engulfing ? "BULLISH" : "BEARISH") + "\nPrice: {{close}}")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOT DATA FOR EXTERNAL USE
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Plot signals for strategy use
+plot(is_bullish_engulfing ? 1 : 0, "Bullish Signal", display=display.data_window)
+plot(is_bearish_engulfing ? 1 : 0, "Bearish Signal", display=display.data_window)
+plot(pattern_strength, "Pattern Strength", display=display.data_window)
+plot(current_volume_ratio, "Volume Ratio", display=display.data_window)
+plot(size_ratio, "Size Ratio", display=display.data_window)
+plot(current_body_ratio, "Body Ratio", display=display.data_window)
+
+// Entry/Exit levels for data window
+plot(is_bullish_engulfing ? bullish_entry_agg : na, "Bull Entry", display=display.data_window)
+plot(is_bullish_engulfing ? bullish_stop : na, "Bull Stop", display=display.data_window)
+plot(is_bullish_engulfing ? bullish_target1 : na, "Bull Target 1", display=display.data_window)
+plot(is_bullish_engulfing ? bullish_target2 : na, "Bull Target 2", display=display.data_window)
+
+plot(is_bearish_engulfing ? bearish_entry_agg : na, "Bear Entry", display=display.data_window)
+plot(is_bearish_engulfing ? bearish_stop : na, "Bear Stop", display=display.data_window)
+plot(is_bearish_engulfing ? bearish_target1 : na, "Bear Target 1", display=display.data_window)
+plot(is_bearish_engulfing ? bearish_target2 : na, "Bear Target 2", display=display.data_window)

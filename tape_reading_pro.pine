@@ -54,6 +54,9 @@ exhaustion_reversal_bars = input.int(3, "Exhaustion Reversal Bars", minval=1, ma
 
 // === VISUAL SETTINGS ===
 group_visual = "═══ VISUAL SETTINGS ═══"
+signal_display_mode = input.string("Shapes Only", "Signal Display Mode", options=["Labels Only", "Shapes Only", "Both", "None"], group=group_visual, tooltip="Choose how to display signals on chart")
+show_backgrounds = input.bool(false, "Show Background Highlights", group=group_visual, tooltip="Highlight absorption and exhaustion zones with subtle background colors")
+show_metrics_table = input.bool(false, "Show Metrics Table", group=group_visual, tooltip="Display real-time tape reading metrics in a table")
 color_aggressive_buy = input.color(color.new(color.green, 0), "Aggressive Buy", group=group_visual)
 color_aggressive_sell = input.color(color.new(color.red, 0), "Aggressive Sell", group=group_visual)
 color_absorption = input.color(color.new(color.blue, 0), "Absorption", group=group_visual)
@@ -159,6 +162,24 @@ is_strong_absorption = is_absorption and absorption_count >= 2
 show_exhaustion_signal = show_exhaustion and is_exhaustion_warning
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SIGNAL PRIORITIZATION
+// ═══════════════════════════════════════════════════════════════════════════════
+// When multiple signals occur on same bar, show only the most important one
+// Priority: Exhaustion > Aggressive Orders > Absorption
+
+// Determine primary signal for this bar
+signal_priority = show_exhaustion_signal ? 4 :
+                  is_aggressive_sell ? 3 :
+                  is_aggressive_buy ? 2 :
+                  is_strong_absorption ? 1 : 0
+
+// Show only the highest priority signal
+show_exhaustion_only = signal_priority == 4
+show_aggressive_sell_only = signal_priority == 3
+show_aggressive_buy_only = signal_priority == 2
+show_absorption_only = signal_priority == 1
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // CANDLE COLORING
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -180,8 +201,8 @@ barcolor(candle_color, title="Tape Reading Candle Color")
 // BACKGROUND HIGHLIGHTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-bgcolor(is_strong_absorption and show_absorption ? color.new(color.blue, 95) : na, title="Absorption Zone")
-bgcolor(show_exhaustion_signal and show_exhaustion ? color.new(color.orange, 95) : na, title="Exhaustion Warning")
+bgcolor(show_backgrounds and show_absorption_only ? color.new(color.blue, 97) : na, title="Absorption Zone")
+bgcolor(show_backgrounds and show_exhaustion_only ? color.new(color.orange, 97) : na, title="Exhaustion Warning")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VOLUME DELTA HISTOGRAM
@@ -199,55 +220,85 @@ hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed)
 // LABELS & SIGNALS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-if show_labels
-    // Aggressive Buy
-    if is_aggressive_buy
-        label.new(bar_index, low, "BUY",
-                  style=label.style_label_up,
-                  color=color_aggressive_buy,
-                  textcolor=color.white,
-                  size=size.small,
-                  tooltip="Aggressive Buying Detected\nInitiative Score: " + str.tostring(initiative_score, "#.##") +
-                          "\nVolume Ratio: " + str.tostring(volume_ratio, "#.##"))
+show_label_display = signal_display_mode == "Labels Only" or signal_display_mode == "Both"
+show_shape_display = signal_display_mode == "Shapes Only" or signal_display_mode == "Both"
 
-    // Aggressive Sell
-    if is_aggressive_sell
+// LABELS (only show highest priority signal per bar)
+if show_label_display and show_labels
+    // Exhaustion (Highest Priority)
+    if show_exhaustion_only
+        label.new(bar_index, high, "EXH",
+                  style=label.style_label_down,
+                  color=color_exhaustion,
+                  textcolor=color.white,
+                  size=size.normal,
+                  tooltip="⚠️ EXHAUSTION WARNING\nExtreme Volume: " + str.tostring(volume_ratio, "#.##") + "x average\nWatch for reversal in next 1-3 bars")
+
+    // Aggressive Sell (2nd Priority)
+    else if show_aggressive_sell_only
         label.new(bar_index, high, "SELL",
                   style=label.style_label_down,
                   color=color_aggressive_sell,
                   textcolor=color.white,
-                  size=size.small,
-                  tooltip="Aggressive Selling Detected\nInitiative Score: " + str.tostring(initiative_score, "#.##") +
-                          "\nVolume Ratio: " + str.tostring(volume_ratio, "#.##"))
+                  size=size.normal,
+                  tooltip="🔴 AGGRESSIVE SELLING\nInitiative Score: " + str.tostring(initiative_score, "#.##") +
+                          "\nVolume Ratio: " + str.tostring(volume_ratio, "#.##") + "x")
 
-    // Absorption
-    if is_strong_absorption
-        label.new(bar_index, high * 1.001, "ABS",
+    // Aggressive Buy (3rd Priority)
+    else if show_aggressive_buy_only
+        label.new(bar_index, low, "BUY",
+                  style=label.style_label_up,
+                  color=color_aggressive_buy,
+                  textcolor=color.white,
+                  size=size.normal,
+                  tooltip="🟢 AGGRESSIVE BUYING\nInitiative Score: " + str.tostring(initiative_score, "#.##") +
+                          "\nVolume Ratio: " + str.tostring(volume_ratio, "#.##") + "x")
+
+    // Absorption (Lowest Priority)
+    else if show_absorption_only
+        label.new(bar_index, high, "ABS",
                   style=label.style_label_down,
                   color=color_absorption,
                   textcolor=color.white,
-                  size=size.tiny,
-                  tooltip="Absorption Detected\nHigh Volume, Narrow Range\nAbsorption Ratio: " + str.tostring(absorption_normalized, "#.##") +
-                          "\nSmart Money likely positioning")
-
-    // Exhaustion Warning
-    if show_exhaustion_signal
-        label.new(bar_index, high * 1.002, "EXH",
-                  style=label.style_label_down,
-                  color=color_exhaustion,
-                  textcolor=color.white,
-                  size=size.tiny,
-                  tooltip="Exhaustion Warning\nExtreme Volume Detected\nVolume Ratio: " + str.tostring(volume_ratio, "#.##") +
-                          "\nWatch for reversal")
+                  size=size.small,
+                  tooltip="🔵 ABSORPTION ZONE\nHigh Volume + Narrow Range\nAbsorption Ratio: " + str.tostring(absorption_normalized, "#.##") +
+                          "\nSmart Money positioning")
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PLOTS FOR ALERTS
+// SHAPES (only show highest priority signal per bar)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-plotshape(is_aggressive_buy and show_aggressive, title="Aggressive Buy Signal", style=shape.triangleup, location=location.belowbar, color=color_aggressive_buy, size=size.small)
-plotshape(is_aggressive_sell and show_aggressive, title="Aggressive Sell Signal", style=shape.triangledown, location=location.abovebar, color=color_aggressive_sell, size=size.small)
-plotshape(is_strong_absorption and show_absorption, title="Absorption Signal", style=shape.circle, location=location.abovebar, color=color_absorption, size=size.tiny)
-plotshape(show_exhaustion_signal and show_exhaustion, title="Exhaustion Signal", style=shape.xcross, location=location.abovebar, color=color_exhaustion, size=size.small)
+plotshape(show_shape_display and show_exhaustion_only and show_exhaustion,
+          title="Exhaustion Signal",
+          style=shape.xcross,
+          location=location.abovebar,
+          color=color_exhaustion,
+          size=size.normal,
+          text="EXH")
+
+plotshape(show_shape_display and show_aggressive_sell_only and show_aggressive,
+          title="Aggressive Sell Signal",
+          style=shape.triangledown,
+          location=location.abovebar,
+          color=color_aggressive_sell,
+          size=size.normal,
+          text="SELL")
+
+plotshape(show_shape_display and show_aggressive_buy_only and show_aggressive,
+          title="Aggressive Buy Signal",
+          style=shape.triangleup,
+          location=location.belowbar,
+          color=color_aggressive_buy,
+          size=size.normal,
+          text="BUY")
+
+plotshape(show_shape_display and show_absorption_only and show_absorption,
+          title="Absorption Signal",
+          style=shape.diamond,
+          location=location.abovebar,
+          color=color_absorption,
+          size=size.small,
+          text="ABS")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ALERT CONDITIONS
@@ -261,8 +312,6 @@ alertcondition(show_exhaustion_signal, title="Exhaustion Warning", message="Tape
 // ═══════════════════════════════════════════════════════════════════════════════
 // TABLE: REAL-TIME METRICS DISPLAY
 // ═══════════════════════════════════════════════════════════════════════════════
-
-show_metrics_table = input.bool(false, "Show Metrics Table", group=group_visual, tooltip="Display real-time tape reading metrics in a table")
 
 if show_metrics_table and barstate.islast
     var table metrics_table = table.new(position.top_right, 2, 7, border_width=1)

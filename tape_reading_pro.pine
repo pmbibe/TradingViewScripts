@@ -2,21 +2,22 @@
 // © pmbibe
 
 //@version=6
-indicator("Tape Reading Pro - Order Flow Analysis", shorttitle="TapeReadingPro", overlay=true, max_bars_back=500, max_labels_count=500, max_lines_count=500)
+indicator("Tape Reading Pro - Order Flow Analysis", shorttitle="TapeReadingPro", overlay=true, max_bars_back=500, max_labels_count=500)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TAPE READING FOUNDATIONS - POSITION TRADING SYSTEM
+// TAPE READING FOUNDATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 // This indicator decodes institutional order flow by analyzing:
 // 1. PRICE: Movement direction, speed, and tick behavior
 // 2. VOLUME: Traded volume, spikes, and absorption patterns
 // 3. TIME: Duration at price levels and consolidation periods
 //
-// Position Trading Logic Based ONLY on Tape Reading:
-// - NO traditional indicators (RSI, MACD, EMA, etc.)
-// - Entry based on Accumulation + Breakout confirmation
-// - Stop Loss derived from tape behavior (structural, volume-based, time-based)
-// - Exit on Exhaustion or opposite absorption
+// Key Tape Behaviors Detected:
+// - Aggressive Buying/Selling (Initiative Orders)
+// - Absorption (Smart Money Accumulation/Distribution)
+// - Exhaustion (Climax Volume & Reversals)
+// - Initiative vs Responsive Orders
+// - Fake vs Real Breakouts
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // USER INPUTS
@@ -24,215 +25,104 @@ indicator("Tape Reading Pro - Order Flow Analysis", shorttitle="TapeReadingPro",
 
 // === MODULE TOGGLES ===
 group_modules = "═══ MODULE TOGGLES ═══"
-show_aggressive = input.bool(true, "Show Aggressive Orders", group=group_modules)
-show_absorption = input.bool(true, "Show Absorption Zones", group=group_modules)
-show_exhaustion = input.bool(true, "Show Exhaustion Signals", group=group_modules)
-show_delta_histogram = input.bool(true, "Show Volume Delta Histogram", group=group_modules)
-show_labels = input.bool(true, "Show Event Labels", group=group_modules)
-show_candle_colors = input.bool(true, "Color Candles by Tape Condition", group=group_modules)
-show_compression_bg = input.bool(true, "Show Compression Zones", group=group_modules)
-
-// === POSITION TRADING MODULE ===
-group_position = "═══ POSITION TRADING ═══"
-enable_position_trading = input.bool(true, "Enable Position Trading Logic", group=group_position)
-show_position_visuals = input.bool(true, "Show Position Entry/SL Lines", group=group_position)
-show_position_table = input.bool(true, "Show Position Status Table", group=group_position)
+show_aggressive = input.bool(true, "Show Aggressive Orders", group=group_modules, tooltip="Detect initiative buying/selling with fast price movement and high volume")
+show_absorption = input.bool(true, "Show Absorption Zones", group=group_modules, tooltip="Identify areas where Smart Money is accumulating/distributing (high volume, minimal price movement)")
+show_exhaustion = input.bool(true, "Show Exhaustion Signals", group=group_modules, tooltip="Detect climax volume followed by reversals")
+show_delta_histogram = input.bool(true, "Show Volume Delta Histogram", group=group_modules, tooltip="Display estimated buying/selling pressure")
+show_labels = input.bool(true, "Show Event Labels", group=group_modules, tooltip="Display labels for key tape reading events")
+show_candle_colors = input.bool(true, "Color Candles by Tape Condition", group=group_modules, tooltip="Override candle colors based on order flow")
 
 // === VOLUME PARAMETERS ===
 group_volume = "═══ VOLUME PARAMETERS ═══"
-volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=100, group=group_volume)
-high_volume_threshold = input.float(1.5, "High Volume Threshold", minval=1.0, maxval=5.0, step=0.1, group=group_volume)
-extreme_volume_threshold = input.float(3.0, "Extreme Volume Threshold", minval=2.0, maxval=10.0, step=0.5, group=group_volume)
+volume_ma_length = input.int(20, "Volume MA Length", minval=5, maxval=100, group=group_volume, tooltip="Period for average volume calculation")
+high_volume_threshold = input.float(2.0, "High Volume Threshold", minval=1.0, maxval=5.0, step=0.1, group=group_volume, tooltip="Multiplier of average volume to detect high volume (2.0 = 200% of average)")
+extreme_volume_threshold = input.float(3.0, "Extreme Volume Threshold", minval=2.0, maxval=10.0, step=0.5, group=group_volume, tooltip="Multiplier for exhaustion detection (3.0 = 300% of average)")
 
-// === ABSORPTION/ACCUMULATION PARAMETERS ===
-group_absorption = "═══ ABSORPTION/ACCUMULATION ═══"
-absorption_sensitivity = input.float(1.5, "Absorption Sensitivity", minval=0.5, maxval=5.0, step=0.1, group=group_absorption)
-absorption_lookback = input.int(3, "Absorption Lookback Bars", minval=1, maxval=10, group=group_absorption)
-time_at_price_threshold = input.int(5, "Time at Price (min bars)", minval=3, maxval=20, group=group_absorption)
-price_range_pct = input.float(2.0, "Price Range % for Time at Price", minval=0.5, maxval=5.0, step=0.1, group=group_absorption)
+// === ABSORPTION PARAMETERS ===
+group_absorption = "═══ ABSORPTION PARAMETERS ═══"
+absorption_sensitivity = input.float(1.5, "Absorption Sensitivity", minval=0.5, maxval=5.0, step=0.1, group=group_absorption, tooltip="Higher values = stricter absorption detection. Measures volume/spread ratio.")
+absorption_lookback = input.int(3, "Absorption Lookback", minval=1, maxval=10, group=group_absorption, tooltip="Number of bars to confirm absorption pattern")
 
-// === BREAKOUT PARAMETERS ===
-group_breakout = "═══ BREAKOUT CONFIRMATION ═══"
-initiative_threshold = input.float(1.5, "Initiative Score Threshold", minval=1.0, maxval=3.0, step=0.1, group=group_breakout)
-velocity_lookback = input.int(5, "Price Velocity Lookback", minval=3, maxval=20, group=group_breakout)
-breakout_volume_min = input.float(1.5, "Breakout Min Volume Ratio", minval=1.0, maxval=3.0, step=0.1, group=group_breakout)
-trap_avoidance_bars = input.int(2, "Trap Avoidance Bars", minval=1, maxval=5, group=group_breakout)
+// === INITIATIVE PARAMETERS ===
+group_initiative = "═══ INITIATIVE PARAMETERS ═══"
+initiative_threshold = input.float(1.5, "Initiative Score Threshold", minval=1.0, maxval=3.0, step=0.1, group=group_initiative, tooltip="Minimum score to flag aggressive orders (combines body strength with volume)")
+velocity_lookback = input.int(5, "Price Velocity Lookback", minval=3, maxval=20, group=group_initiative, tooltip="Period to measure price movement speed")
 
-// === COMPRESSION PARAMETERS ===
-group_compression = "═══ COMPRESSION DETECTION ═══"
-compression_atr_mult = input.float(0.5, "Compression ATR Multiplier", minval=0.2, maxval=0.8, step=0.1, group=group_compression)
-compression_min_bars = input.int(3, "Min Compression Bars", minval=2, maxval=10, group=group_compression)
-
-// === STOP LOSS PARAMETERS (TAPE-DERIVED) ===
-group_sl = "═══ TAPE-DERIVED STOP LOSS ═══"
-sl_type_tape = input.string("Structural", "Stop Loss Type", options=["Structural", "Volume Failure", "Time Invalidation", "Hybrid"], group=group_sl)
-volume_failure_threshold = input.float(2.0, "Volume Failure Threshold", minval=1.5, maxval=4.0, step=0.1, group=group_sl)
-time_invalidation_bars = input.int(10, "Time Invalidation Bars", minval=5, maxval=30, group=group_sl)
-sl_buffer_atr_mult = input.float(0.2, "SL Buffer (ATR mult)", minval=0.0, maxval=0.5, step=0.05, group=group_sl)
+// === EXHAUSTION PARAMETERS ===
+group_exhaustion = "═══ EXHAUSTION PARAMETERS ═══"
+exhaustion_reversal_bars = input.int(3, "Exhaustion Reversal Bars", minval=1, maxval=5, group=group_exhaustion, tooltip="Number of reversal bars after climax volume to confirm exhaustion")
 
 // === VISUAL SETTINGS ===
 group_visual = "═══ VISUAL SETTINGS ═══"
 color_aggressive_buy = input.color(color.new(color.green, 0), "Aggressive Buy", group=group_visual)
 color_aggressive_sell = input.color(color.new(color.red, 0), "Aggressive Sell", group=group_visual)
-color_absorption = input.color(color.new(color.blue, 0), "Absorption/Accumulation", group=group_visual)
+color_absorption = input.color(color.new(color.blue, 0), "Absorption", group=group_visual)
 color_exhaustion = input.color(color.new(color.orange, 0), "Exhaustion", group=group_visual)
-color_compression = input.color(color.new(color.purple, 90), "Compression Zone", group=group_visual)
-color_position_long = input.color(color.new(color.green, 20), "Position Long", group=group_visual)
-color_position_short = input.color(color.new(color.red, 20), "Position Short", group=group_visual)
-color_sl = input.color(color.new(color.red, 40), "Stop Loss", group=group_visual)
 color_delta_buy = input.color(color.new(color.lime, 60), "Delta Buy Pressure", group=group_visual)
 color_delta_sell = input.color(color.new(color.maroon, 60), "Delta Sell Pressure", group=group_visual)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CORE TAPE READING CALCULATIONS (MANDATORY VARIABLES)
+// CORE TAPE READING CALCULATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // === BASIC METRICS ===
 candle_body = math.abs(close - open)
 candle_range = high - low
-candle_range_safe = math.max(candle_range, syminfo.mintick)
 candle_direction = close >= open ? 1 : -1
-close_position = (close - low) / candle_range_safe  // 0 to 1
 
-// === VOLUME_RATIO (MANDATORY) ===
-// Volume_Ratio = volume / sma(volume, 20)
+// Avoid division by zero
+candle_range_safe = candle_range == 0 ? 0.0000001 : candle_range
+
+// === VOLUME ANALYSIS ===
 volume_ma = ta.sma(volume, volume_ma_length)
 volume_ratio = volume_ma == 0 ? 0 : volume / volume_ma
 
-// === PRICE_VELOCITY (MANDATORY) ===
-// Price_Velocity = abs(close - close[5]) / 5
-price_velocity = math.abs(close - close[velocity_lookback]) / velocity_lookback
+// === VOLUME DELTA ESTIMATION ===
+// Since TradingView doesn't have real delta, we estimate it using close position within candle
+// Bullish candle closing near high = buying pressure
+// Bearish candle closing near low = selling pressure
+close_position = (close - low) / candle_range_safe  // 0 to 1, where 1 = close at high
+delta_estimate = (close_position - 0.5) * 2 * volume  // -volume to +volume
+// Alternative: simple delta based on candle direction
+delta_simple = candle_direction * volume
 
-// === ABSORPTION_RATIO (MANDATORY) ===
-// Absorption_Ratio = volume / max(high - low, syminfo.mintick)
+// Combine both methods with weight toward close position
+volume_delta = (delta_estimate * 0.7) + (delta_simple * 0.3)
+
+// === PRICE VELOCITY ===
+// Measures how fast price is moving (initiative orders move price quickly)
+price_change = math.abs(close - close[velocity_lookback])
+price_velocity = price_change / velocity_lookback
+
+// === ABSORPTION RATIO ===
+// High volume with minimal price movement = absorption
+// Formula: Volume / (High - Low)
+// Higher ratio = more absorption (lots of volume but price not moving)
 absorption_ratio = volume / candle_range_safe
 
-// Normalize for comparison
+// Normalize absorption ratio by comparing to recent average
 absorption_ratio_ma = ta.sma(absorption_ratio, absorption_lookback)
 absorption_normalized = absorption_ratio_ma == 0 ? 0 : absorption_ratio / absorption_ratio_ma
 
-// === TIME_AT_PRICE (MANDATORY) ===
-// Number of consecutive bars price remains within ±2% range
-var int time_at_price = 0
-price_range_threshold = close * (price_range_pct / 100)
-price_in_range = math.abs(close - close[1]) < price_range_threshold
-if price_in_range
-    time_at_price := time_at_price + 1
-else
-    time_at_price := 0
-
-// === VOLUME_DELTA_ESTIMATE (MANDATORY) ===
-// Volume_Delta_Estimate = (close - open) * volume
-volume_delta_estimate = (close - open) * volume
-
-// Combined delta with close position weighting
-delta_estimate = (close_position - 0.5) * 2 * volume
-delta_simple = candle_direction * volume
-volume_delta = (delta_estimate * 0.7) + (delta_simple * 0.3)
-
-// === INITIATIVE_SCORE (MANDATORY) ===
-// Initiative_Score = (abs(close - open) / max(high - low, syminfo.mintick)) * Volume_Ratio
-body_strength = candle_body / candle_range_safe
+// === INITIATIVE SCORE ===
+// Combines candle body strength with volume to detect aggressive orders
+// Strong body + high volume = initiative orders
+body_strength = candle_body / candle_range_safe  // Wicks indicate responsive orders, body indicates initiative
 initiative_score = body_strength * volume_ratio
 
-// === COMPRESSION_TIME (MANDATORY) ===
-// Consecutive bars where atr(14) < 0.5 * sma(atr(14), 20)
-atr_14 = ta.atr(14)
-atr_ma_20 = ta.sma(atr_14, 20)
-is_compressed_bar = atr_14 < (compression_atr_mult * atr_ma_20)
-var int compression_time = 0
-if is_compressed_bar
-    compression_time := compression_time + 1
-else
-    compression_time := 0
-
-// === BREAKOUT_VELOCITY (MANDATORY) ===
-// Breakout_Velocity = abs(close - close[Compression_Time]) / max(Compression_Time, 1)
-compression_time_safe = math.max(compression_time, 1)
-breakout_velocity = compression_time > 0 ? math.abs(close - close[compression_time_safe]) / compression_time_safe : price_velocity
-
-// === EXHAUSTION_INDEX (MANDATORY) ===
-// Volume > 3 * sma(volume, 20) AND close reverses within next 3 bars
+// === EXHAUSTION DETECTION ===
+// Extreme volume followed by reversal = exhaustion
 is_extreme_volume = volume_ratio >= extreme_volume_threshold
-is_bullish_exhaustion = is_extreme_volume and candle_direction == 1 and ta.falling(close, 3)
-is_bearish_exhaustion = is_extreme_volume and candle_direction == -1 and ta.rising(close, 3)
+
+// Check if next bars reverse (for exhaustion confirmation)
+// Note: This uses future data for confirmation, but clearly marked as such
+is_bullish_exhaustion = is_extreme_volume and candle_direction == 1 and ta.falling(close, exhaustion_reversal_bars)
+is_bearish_exhaustion = is_extreme_volume and candle_direction == -1 and ta.rising(close, exhaustion_reversal_bars)
 is_exhaustion = is_bullish_exhaustion or is_bearish_exhaustion
+
+// For real-time (non-repainting) exhaustion, we flag when extreme volume appears
+// Traders can watch for reversal in next bars
 is_exhaustion_warning = is_extreme_volume and not is_exhaustion[1]
-
-// === DISTRIBUTION_FLAG (MANDATORY) ===
-// Volume increasing AND (high - low) decreasing
-volume_increasing = volume > volume[1] and volume[1] > volume[2]
-range_decreasing = candle_range < candle_range[1] and candle_range[1] < candle_range[2]
-distribution_flag = volume_increasing and range_decreasing
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// MARKET STATE CLASSIFICATION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// === NO-TRADE CONDITIONS ===
-// Compression without breakout
-is_in_compression = compression_time >= compression_min_bars
-
-// High volatility chop: frequent high volume with immediate reversals
-var int chop_counter = 0
-high_vol_reversal = volume_ratio > high_volume_threshold and candle_direction != candle_direction[1]
-if high_vol_reversal
-    chop_counter := math.min(chop_counter + 1, 10)
-else
-    chop_counter := math.max(chop_counter - 1, 0)
-is_choppy = chop_counter >= 3
-
-// Net price change near zero despite high velocity
-net_change_5 = math.abs(close - close[5])
-avg_range_5 = ta.sma(candle_range, 5)
-is_noise = price_velocity > avg_range_5 * 0.5 and net_change_5 < avg_range_5 * 0.3
-
-// Combined no-trade filter
-no_trade_condition = (is_in_compression and breakout_velocity < price_velocity * 1.5) or is_choppy or is_noise
-
-// === ACCUMULATION DETECTION ===
-// High absorption + time at price + range contraction
-is_accumulating = absorption_normalized > absorption_sensitivity and
-                   volume_ratio >= high_volume_threshold and
-                   time_at_price >= time_at_price_threshold
-
-// Track accumulation zone
-var float accum_zone_high = na
-var float accum_zone_low = na
-var int accum_start_bar = na
-var bool in_accumulation = false
-
-if is_accumulating and not in_accumulation[1]
-    in_accumulation := true
-    accum_start_bar := bar_index
-    accum_zone_high := high
-    accum_zone_low := low
-else if in_accumulation
-    accum_zone_high := math.max(accum_zone_high, high)
-    accum_zone_low := math.min(accum_zone_low, low)
-    // Exit accumulation if price breaks out significantly
-    if close > accum_zone_high * 1.01 or close < accum_zone_low * 0.99
-        in_accumulation := false
-
-// === DISTRIBUTION DETECTION ===
-is_distributing = distribution_flag and volume_ratio >= high_volume_threshold
-
-// Track distribution zone
-var float dist_zone_high = na
-var float dist_zone_low = na
-var int dist_start_bar = na
-var bool in_distribution = false
-
-if is_distributing and not in_distribution[1]
-    in_distribution := true
-    dist_start_bar := bar_index
-    dist_zone_high := high
-    dist_zone_low := low
-else if in_distribution
-    dist_zone_high := math.max(dist_zone_high, high)
-    dist_zone_low := math.min(dist_zone_low, low)
-    if close < dist_zone_low * 0.99 or close > dist_zone_high * 1.01
-        in_distribution := false
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAPE BEHAVIOR DETECTION
@@ -243,17 +133,21 @@ is_aggressive_buy = show_aggressive and
                      candle_direction == 1 and
                      initiative_score > initiative_threshold and
                      volume_ratio > high_volume_threshold and
-                     close_position > 0.7
+                     close_position > 0.7  // Close near high
 
 is_aggressive_sell = show_aggressive and
                       candle_direction == -1 and
                       initiative_score > initiative_threshold and
                       volume_ratio > high_volume_threshold and
-                      close_position < 0.3
+                      close_position < 0.3  // Close near low
 
-// === STRONG ABSORPTION ===
-is_absorption = show_absorption and absorption_normalized > absorption_sensitivity and volume_ratio > high_volume_threshold
+// === ABSORPTION DETECTION ===
+// High volume but narrow range = Smart Money absorbing orders
+is_absorption = show_absorption and
+                 absorption_normalized > absorption_sensitivity and
+                 volume_ratio > high_volume_threshold
 
+// Confirm absorption over multiple bars for stronger signal
 absorption_count = 0
 for i = 0 to absorption_lookback - 1
     if absorption_normalized[i] > absorption_sensitivity and volume_ratio[i] > high_volume_threshold
@@ -261,267 +155,184 @@ for i = 0 to absorption_lookback - 1
 
 is_strong_absorption = is_absorption and absorption_count >= 2
 
-// === EXHAUSTION SIGNAL ===
+// === EXHAUSTION ===
 show_exhaustion_signal = show_exhaustion and is_exhaustion_warning
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// POSITION TRADING - ENTRY LOGIC (TAPE-DERIVED)
+// ENTRY MANAGEMENT - TAPE-DERIVED STOP LOSS (NOT PERCENTAGE-BASED)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// === PERSISTENT POSITION VARIABLES ===
-var int position_direction = 0      // 1 = Long, -1 = Short, 0 = Flat
+// === ENTRY MANAGEMENT INPUTS ===
+group_entry = "═══ ENTRY MANAGEMENT ═══"
+show_entry_management = input.bool(true, "Show Entry Management", group=group_entry, tooltip="Display entry and stop loss levels based on tape reading")
+sl_type = input.string("Structural", "Stop Loss Type", options=["Structural", "Volume Failure", "Hybrid"], group=group_entry, tooltip="Structural: Below absorption zone\nVolume Failure: Based on volume rejection\nHybrid: Both methods")
+sl_lookback = input.int(10, "SL Lookback Bars", minval=5, maxval=30, group=group_entry, tooltip="Bars to look back for structural stop loss")
+volume_failure_mult = input.float(2.0, "Volume Failure Threshold", minval=1.5, maxval=4.0, step=0.1, group=group_entry, tooltip="Volume multiplier for failure detection")
+show_entry_table = input.bool(true, "Show Entry Table", group=group_entry)
+color_entry_long = input.color(color.new(color.green, 20), "Long Entry Color", group=group_entry)
+color_entry_short = input.color(color.new(color.red, 20), "Short Entry Color", group=group_entry)
+color_sl_line = input.color(color.new(color.red, 40), "Stop Loss Color", group=group_entry)
+
+// === POSITION TRACKING VARIABLES ===
+var int position_dir = 0              // 1 = Long, -1 = Short, 0 = Flat
 var float entry_price = na
 var int entry_bar = na
-var float stop_loss_price = na
-var float accum_low_at_entry = na   // Structural SL reference
-var float accum_high_at_entry = na  // For short structural SL
-var int bars_since_entry = 0
-var bool position_invalidated = false
-var string exit_reason = ""
+var float stop_loss = na
+var float absorption_zone_low = na   // For Long SL
+var float absorption_zone_high = na  // For Short SL
+var int bars_in_trade = 0
+var bool sl_hit = false
+var string sl_hit_reason = ""
 
 // Line/Label variables
 var line entry_line = na
 var line sl_line = na
 var label entry_label = na
 var label sl_label = na
-var label accum_label = na
-var label breakout_label = na
 
-// Track bars since entry
-if position_direction != 0
-    bars_since_entry := bars_since_entry + 1
+// Track bars in trade
+if position_dir != 0
+    bars_in_trade := bars_in_trade + 1
 else
-    bars_since_entry := 0
+    bars_in_trade := 0
 
-// === LONG ENTRY CONDITIONS (Accumulation → Breakout) ===
-// 1. Accumulation/Absorption detected recently
-accum_detected_recently = ta.barssince(is_accumulating) < 10 or in_accumulation[1]
+// === TRACK ABSORPTION ZONES FOR STRUCTURAL SL ===
+var float recent_absorption_low = na
+var float recent_absorption_high = na
 
-// 2. Initiative breakout confirmation
-breakout_up = close > ta.highest(high[1], 5) and
-               breakout_velocity > price_velocity and
-               initiative_score > initiative_threshold and
-               volume_delta_estimate > 0
+if is_strong_absorption
+    recent_absorption_low := low
+    recent_absorption_high := high
 
-// 3. Volume confirmation on breakout
-volume_confirmed = volume_ratio >= breakout_volume_min
+// === CALCULATE TAPE-DERIVED STOP LOSS ===
+calc_structural_sl_long() =>
+    // Use absorption zone low or recent swing low
+    float zone_low = not na(recent_absorption_low) ? recent_absorption_low : ta.lowest(low, sl_lookback)
+    float buffer = ta.atr(14) * 0.1
+    zone_low - buffer
 
-// 4. Trap avoidance - no immediate reversal
-no_bull_trap = not (is_aggressive_sell[1] or is_aggressive_sell[2])
+calc_structural_sl_short() =>
+    // Use absorption zone high or recent swing high
+    float zone_high = not na(recent_absorption_high) ? recent_absorption_high : ta.highest(high, sl_lookback)
+    float buffer = ta.atr(14) * 0.1
+    zone_high + buffer
 
-// Combined LONG entry signal
-long_entry_signal = enable_position_trading and
-                     position_direction == 0 and
-                     accum_detected_recently and
-                     breakout_up and
-                     volume_confirmed and
-                     no_bull_trap and
-                     not no_trade_condition and
-                     not is_exhaustion_warning
+// === CHECK STOP LOSS CONDITIONS ===
+// Volume Failure: Price closes against position with high volume and negative delta
+volume_delta_estimate = (close - open) * volume
+volume_failure_long = position_dir == 1 and close < entry_price and volume_ratio > volume_failure_mult and volume_delta_estimate < 0
+volume_failure_short = position_dir == -1 and close > entry_price and volume_ratio > volume_failure_mult and volume_delta_estimate > 0
 
-// === SHORT ENTRY CONDITIONS (Distribution → Breakdown) ===
-dist_detected_recently = ta.barssince(is_distributing) < 10 or in_distribution[1]
+// Price hits structural stop
+price_sl_hit_long = position_dir == 1 and not na(stop_loss) and low <= stop_loss
+price_sl_hit_short = position_dir == -1 and not na(stop_loss) and high >= stop_loss
 
-breakout_down = close < ta.lowest(low[1], 5) and
-                 breakout_velocity > price_velocity and
-                 initiative_score > initiative_threshold and
-                 volume_delta_estimate < 0
-
-no_bear_trap = not (is_aggressive_buy[1] or is_aggressive_buy[2])
-
-short_entry_signal = enable_position_trading and
-                      position_direction == 0 and
-                      dist_detected_recently and
-                      breakout_down and
-                      volume_confirmed and
-                      no_bear_trap and
-                      not no_trade_condition and
-                      not is_exhaustion_warning
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// POSITION TRADING - TAPE-DERIVED STOP LOSS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// Calculate stop loss based on tape behavior
-calc_tape_stop_loss(bool is_long, float entry, float zone_low, float zone_high) =>
-    float sl = na
-    float buffer = atr_14 * sl_buffer_atr_mult
-
-    if sl_type_tape == "Structural"
-        // Below/above accumulation/distribution zone
-        sl := is_long ? zone_low - buffer : zone_high + buffer
-    else if sl_type_tape == "Volume Failure"
-        // Use recent swing with volume consideration
-        sl := is_long ? ta.lowest(low, 10) - buffer : ta.highest(high, 10) + buffer
-    else if sl_type_tape == "Time Invalidation"
-        // Tighter stop, rely on time invalidation
-        sl := is_long ? entry - (atr_14 * 1.5) : entry + (atr_14 * 1.5)
-    else  // Hybrid
-        // Use structural but can be invalidated by volume or time
-        float structural = is_long ? zone_low - buffer : zone_high + buffer
-        float tight = is_long ? entry - (atr_14 * 2) : entry + (atr_14 * 2)
-        sl := is_long ? math.max(structural, tight) : math.min(structural, tight)
-    sl
-
-// === STOP LOSS INVALIDATION CONDITIONS ===
-// Volume-based failure: price closes against us with high volume
-volume_failure_long = position_direction == 1 and close < entry_price and volume_ratio > volume_failure_threshold and volume_delta_estimate < 0
-volume_failure_short = position_direction == -1 and close > entry_price and volume_ratio > volume_failure_threshold and volume_delta_estimate > 0
-
-// Time-based invalidation: breakout fails to advance
-time_invalidation = bars_since_entry >= time_invalidation_bars and position_direction != 0
-
-// Price stop hit
-price_stop_hit_long = position_direction == 1 and low <= stop_loss_price
-price_stop_hit_short = position_direction == -1 and high >= stop_loss_price
-
-// Combined stop conditions
-stop_triggered = price_stop_hit_long or price_stop_hit_short or
-                  (sl_type_tape == "Volume Failure" and (volume_failure_long or volume_failure_short)) or
-                  (sl_type_tape == "Time Invalidation" and time_invalidation) or
-                  (sl_type_tape == "Hybrid" and (volume_failure_long or volume_failure_short or time_invalidation))
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// POSITION TRADING - EXIT CONDITIONS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// Exhaustion exit
-exhaustion_exit_long = position_direction == 1 and is_bullish_exhaustion
-exhaustion_exit_short = position_direction == -1 and is_bearish_exhaustion
-
-// Opposite absorption detected
-opposite_absorption_long = position_direction == 1 and is_strong_absorption and candle_direction == -1
-opposite_absorption_short = position_direction == -1 and is_strong_absorption and candle_direction == 1
-
-// Volume climax with rejection
-climax_rejection_long = position_direction == 1 and is_extreme_volume and close < open and close < low[1]
-climax_rejection_short = position_direction == -1 and is_extreme_volume and close > open and close > high[1]
-
-// Combined exit signal
-exit_signal = stop_triggered or exhaustion_exit_long or exhaustion_exit_short or
-               opposite_absorption_long or opposite_absorption_short or
-               climax_rejection_long or climax_rejection_short
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// POSITION MANAGEMENT EXECUTION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// Process exits first
-if position_direction != 0 and exit_signal
-    // Determine exit reason
-    if price_stop_hit_long or price_stop_hit_short
-        exit_reason := "STOP HIT"
+// Combined stop logic based on selected type
+stop_triggered = false
+if sl_type == "Structural"
+    stop_triggered := price_sl_hit_long or price_sl_hit_short
+    if price_sl_hit_long or price_sl_hit_short
+        sl_hit_reason := "STRUCTURAL SL"
+else if sl_type == "Volume Failure"
+    stop_triggered := volume_failure_long or volume_failure_short
+    if volume_failure_long or volume_failure_short
+        sl_hit_reason := "VOLUME FAILURE"
+else  // Hybrid
+    stop_triggered := price_sl_hit_long or price_sl_hit_short or volume_failure_long or volume_failure_short
+    if price_sl_hit_long or price_sl_hit_short
+        sl_hit_reason := "STRUCTURAL SL"
     else if volume_failure_long or volume_failure_short
-        exit_reason := "VOLUME FAILURE"
-    else if time_invalidation
-        exit_reason := "TIME INVALIDATION"
-    else if exhaustion_exit_long or exhaustion_exit_short
-        exit_reason := "EXHAUSTION EXIT"
-    else if opposite_absorption_long or opposite_absorption_short
-        exit_reason := "OPPOSITE ABSORPTION"
-    else if climax_rejection_long or climax_rejection_short
-        exit_reason := "CLIMAX REJECTION"
-    else
-        exit_reason := "EXIT"
+        sl_hit_reason := "VOLUME FAILURE"
 
-    position_direction := 0
-    position_invalidated := true
-
-    // Clean up visuals
+// === PROCESS EXITS ===
+if show_entry_management and position_dir != 0 and stop_triggered
+    sl_hit := true
+    position_dir := 0
     line.delete(entry_line)
     line.delete(sl_line)
     label.delete(entry_label)
     label.delete(sl_label)
 
-// Process new entries
-if long_entry_signal and position_direction == 0
-    position_direction := 1
+// === PROCESS ENTRIES ===
+// Long Entry: Aggressive Buy signal
+if show_entry_management and is_aggressive_buy and position_dir == 0
+    position_dir := 1
     entry_price := close
     entry_bar := bar_index
-    accum_low_at_entry := not na(accum_zone_low) ? accum_zone_low : ta.lowest(low, 10)
-    accum_high_at_entry := not na(accum_zone_high) ? accum_zone_high : ta.highest(high, 10)
-    stop_loss_price := calc_tape_stop_loss(true, entry_price, accum_low_at_entry, accum_high_at_entry)
-    bars_since_entry := 0
-    position_invalidated := false
-    exit_reason := ""
+    absorption_zone_low := not na(recent_absorption_low) ? recent_absorption_low : ta.lowest(low, sl_lookback)
+    stop_loss := calc_structural_sl_long()
+    bars_in_trade := 0
+    sl_hit := false
+    sl_hit_reason := ""
 
-if short_entry_signal and position_direction == 0
-    position_direction := -1
+// Short Entry: Aggressive Sell signal
+if show_entry_management and is_aggressive_sell and position_dir == 0
+    position_dir := -1
     entry_price := close
     entry_bar := bar_index
-    accum_low_at_entry := not na(dist_zone_low) ? dist_zone_low : ta.lowest(low, 10)
-    accum_high_at_entry := not na(dist_zone_high) ? dist_zone_high : ta.highest(high, 10)
-    stop_loss_price := calc_tape_stop_loss(false, entry_price, accum_low_at_entry, accum_high_at_entry)
-    bars_since_entry := 0
-    position_invalidated := false
-    exit_reason := ""
+    absorption_zone_high := not na(recent_absorption_high) ? recent_absorption_high : ta.highest(high, sl_lookback)
+    stop_loss := calc_structural_sl_short()
+    bars_in_trade := 0
+    sl_hit := false
+    sl_hit_reason := ""
 
-// === DYNAMIC STOP ADJUSTMENT ===
-// Only adjust stop when new absorption forms above entry (for longs)
-if position_direction == 1 and is_strong_absorption and low > entry_price
-    // Re-accumulation detected - trail stop
-    float new_sl = low - (atr_14 * sl_buffer_atr_mult)
-    if new_sl > stop_loss_price
-        stop_loss_price := new_sl
+// === DYNAMIC SL ADJUSTMENT (Trail on new absorption) ===
+if position_dir == 1 and is_strong_absorption and low > entry_price
+    float new_sl = low - ta.atr(14) * 0.1
+    if new_sl > stop_loss
+        stop_loss := new_sl
 
-if position_direction == -1 and is_strong_absorption and high < entry_price
-    // Re-distribution detected - trail stop
-    float new_sl = high + (atr_14 * sl_buffer_atr_mult)
-    if new_sl < stop_loss_price
-        stop_loss_price := new_sl
+if position_dir == -1 and is_strong_absorption and high < entry_price
+    float new_sl = high + ta.atr(14) * 0.1
+    if new_sl < stop_loss
+        stop_loss := new_sl
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// VISUALIZATION - POSITION TRADING
-// ═══════════════════════════════════════════════════════════════════════════════
-
-if show_position_visuals and enable_position_trading
-    // Clean old lines
+// === VISUALIZATION ===
+if show_entry_management and position_dir != 0 and not na(entry_price) and not na(stop_loss)
     line.delete(entry_line)
     line.delete(sl_line)
     label.delete(entry_label)
     label.delete(sl_label)
 
-    if position_direction != 0 and not na(entry_price) and not na(stop_loss_price)
-        color pos_color = position_direction == 1 ? color_position_long : color_position_short
-        string dir_text = position_direction == 1 ? "LONG" : "SHORT"
+    color pos_color = position_dir == 1 ? color_entry_long : color_entry_short
+    string dir_text = position_dir == 1 ? "LONG" : "SHORT"
 
-        // Entry line
-        entry_line := line.new(entry_bar, entry_price, bar_index + 5, entry_price, color=pos_color, width=2, style=line.style_solid)
-        entry_label := label.new(bar_index + 6, entry_price, dir_text + " Entry: " + str.tostring(entry_price, format.mintick), style=label.style_label_left, color=pos_color, textcolor=color.white, size=size.small)
+    entry_line := line.new(entry_bar, entry_price, bar_index + 5, entry_price, color=pos_color, width=2, style=line.style_solid)
+    entry_label := label.new(bar_index + 6, entry_price, dir_text + ": " + str.tostring(entry_price, format.mintick), style=label.style_label_left, color=pos_color, textcolor=color.white, size=size.small)
 
-        // Stop loss line
-        sl_line := line.new(entry_bar, stop_loss_price, bar_index + 5, stop_loss_price, color=color_sl, width=1, style=line.style_dashed)
-        float sl_dist_pct = math.abs(entry_price - stop_loss_price) / entry_price * 100
-        string sl_type_text = sl_type_tape == "Structural" ? "STRUCT" : sl_type_tape == "Volume Failure" ? "VOL" : sl_type_tape == "Time Invalidation" ? "TIME" : "HYBRID"
-        sl_label := label.new(bar_index + 6, stop_loss_price, "SL (" + sl_type_text + "): " + str.tostring(stop_loss_price, format.mintick) + " (-" + str.tostring(sl_dist_pct, "#.##") + "%)", style=label.style_label_left, color=color_sl, textcolor=color.white, size=size.tiny)
+    sl_line := line.new(entry_bar, stop_loss, bar_index + 5, stop_loss, color=color_sl_line, width=1, style=line.style_dashed)
+    float sl_dist = math.abs(entry_price - stop_loss) / entry_price * 100
+    sl_label := label.new(bar_index + 6, stop_loss, "SL (" + sl_type + "): " + str.tostring(stop_loss, format.mintick) + " [-" + str.tostring(sl_dist, "#.##") + "%]", style=label.style_label_left, color=color_sl_line, textcolor=color.white, size=size.tiny)
 
-// === POSITION ENTRY/EXIT LABELS ===
-if show_labels and enable_position_trading
-    if long_entry_signal[1] and position_direction == 1
-        label.new(bar_index[1], low[1], "POSITION\nENTRY", style=label.style_label_up, color=color_position_long, textcolor=color.white, size=size.small)
+// === ENTRY STATUS TABLE ===
+if show_entry_table and show_entry_management and barstate.islast
+    var table entry_tbl = table.new(position.bottom_right, 2, 7, border_width=1)
 
-    if short_entry_signal[1] and position_direction == -1
-        label.new(bar_index[1], high[1], "POSITION\nENTRY", style=label.style_label_down, color=color_position_short, textcolor=color.white, size=size.small)
+    color hdr_bg = position_dir == 1 ? color_entry_long : position_dir == -1 ? color_entry_short : color.gray
+    table.cell(entry_tbl, 0, 0, "ENTRY STATUS", bgcolor=hdr_bg, text_color=color.white, text_size=size.small)
+    table.cell(entry_tbl, 1, 0, "VALUE", bgcolor=hdr_bg, text_color=color.white, text_size=size.small)
 
-    if position_invalidated and exit_reason != ""
-        label.new(bar_index, position_direction[1] == 1 ? high : low, exit_reason, style=position_direction[1] == 1 ? label.style_label_down : label.style_label_up, color=color_exhaustion, textcolor=color.white, size=size.tiny)
+    string pos_str = position_dir == 1 ? "LONG" : position_dir == -1 ? "SHORT" : "FLAT"
+    table.cell(entry_tbl, 0, 1, "Position", text_size=size.small)
+    table.cell(entry_tbl, 1, 1, pos_str, bgcolor=hdr_bg, text_color=color.white, text_size=size.small)
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// VISUALIZATION - TAPE READING LABELS
-// ═══════════════════════════════════════════════════════════════════════════════
+    table.cell(entry_tbl, 0, 2, "Entry", text_size=size.small)
+    table.cell(entry_tbl, 1, 2, position_dir != 0 and not na(entry_price) ? str.tostring(entry_price, format.mintick) : "---", text_size=size.small)
 
-if show_labels
-    if is_accumulating and not is_accumulating[1]
-        label.new(bar_index, low * 0.999, "ACCUM", style=label.style_label_up, color=color_absorption, textcolor=color.white, size=size.tiny, tooltip="Accumulation Zone\nAbsorption: " + str.tostring(absorption_normalized, "#.##") + "\nTime at Price: " + str.tostring(time_at_price))
+    table.cell(entry_tbl, 0, 3, "Stop (" + sl_type + ")", text_size=size.small)
+    table.cell(entry_tbl, 1, 3, position_dir != 0 and not na(stop_loss) ? str.tostring(stop_loss, format.mintick) : "---", text_size=size.small)
 
-    if is_distributing and not is_distributing[1]
-        label.new(bar_index, high * 1.001, "DIST", style=label.style_label_down, color=color_aggressive_sell, textcolor=color.white, size=size.tiny, tooltip="Distribution Zone\nVolume increasing, Range decreasing")
+    float risk_pct = position_dir != 0 and not na(entry_price) and not na(stop_loss) ? math.abs(entry_price - stop_loss) / entry_price * 100 : 0
+    table.cell(entry_tbl, 0, 4, "Risk %", text_size=size.small)
+    table.cell(entry_tbl, 1, 4, position_dir != 0 ? str.tostring(risk_pct, "#.##") + "%" : "---", text_size=size.small)
 
-    if is_strong_absorption and not enable_position_trading
-        label.new(bar_index, high * 1.001, "ABS", style=label.style_label_down, color=color_absorption, textcolor=color.white, size=size.tiny, tooltip="Strong Absorption\nAbsorption Ratio: " + str.tostring(absorption_normalized, "#.##"))
+    float pnl = position_dir == 1 ? (close - entry_price) / entry_price * 100 : position_dir == -1 ? (entry_price - close) / entry_price * 100 : 0
+    color pnl_bg = pnl > 0 ? color.new(color.green, 70) : pnl < 0 ? color.new(color.red, 70) : na
+    table.cell(entry_tbl, 0, 5, "P&L %", text_size=size.small)
+    table.cell(entry_tbl, 1, 5, position_dir != 0 ? str.tostring(pnl, "#.##") + "%" : "---", bgcolor=pnl_bg, text_size=size.small)
 
-    if show_exhaustion_signal
-        label.new(bar_index, high * 1.002, "EXH", style=label.style_label_down, color=color_exhaustion, textcolor=color.white, size=size.tiny, tooltip="Exhaustion Warning\nVolume Ratio: " + str.tostring(volume_ratio, "#.##"))
+    table.cell(entry_tbl, 0, 6, "Last Exit", text_size=size.small)
+    table.cell(entry_tbl, 1, 6, sl_hit_reason != "" ? sl_hit_reason : "---", text_size=size.small)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CANDLE COLORING
@@ -534,10 +345,8 @@ if show_candle_colors
         candle_color := color_aggressive_buy
     else if is_aggressive_sell
         candle_color := color_aggressive_sell
-    else if is_accumulating
+    else if is_strong_absorption
         candle_color := color_absorption
-    else if is_distributing
-        candle_color := color.new(color.purple, 20)
     else if show_exhaustion_signal
         candle_color := color_exhaustion
 
@@ -549,144 +358,173 @@ barcolor(candle_color, title="Tape Reading Candle Color")
 
 bgcolor(is_strong_absorption and show_absorption ? color.new(color.blue, 95) : na, title="Absorption Zone")
 bgcolor(show_exhaustion_signal and show_exhaustion ? color.new(color.orange, 95) : na, title="Exhaustion Warning")
-bgcolor(is_in_compression and show_compression_bg ? color_compression : na, title="Compression Zone")
-bgcolor(no_trade_condition ? color.new(color.gray, 95) : na, title="No Trade Zone")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VOLUME DELTA HISTOGRAM
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Normalize delta for histogram display
 delta_normalized = volume_delta / ta.highest(math.abs(volume_delta), 50) * 100
 histogram_color = volume_delta > 0 ? color_delta_buy : color_delta_sell
 
+// Plot only if enabled (use na to hide)
 plot(show_delta_histogram ? delta_normalized : na, title="Volume Delta", style=plot.style_histogram, color=histogram_color, linewidth=2)
 hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LABELS & SIGNALS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if show_labels
+    // Aggressive Buy
+    if is_aggressive_buy
+        label.new(bar_index, low, "BUY",
+                  style=label.style_label_up,
+                  color=color_aggressive_buy,
+                  textcolor=color.white,
+                  size=size.small,
+                  tooltip="Aggressive Buying Detected\nInitiative Score: " + str.tostring(initiative_score, "#.##") +
+                          "\nVolume Ratio: " + str.tostring(volume_ratio, "#.##"))
+
+    // Aggressive Sell
+    if is_aggressive_sell
+        label.new(bar_index, high, "SELL",
+                  style=label.style_label_down,
+                  color=color_aggressive_sell,
+                  textcolor=color.white,
+                  size=size.small,
+                  tooltip="Aggressive Selling Detected\nInitiative Score: " + str.tostring(initiative_score, "#.##") +
+                          "\nVolume Ratio: " + str.tostring(volume_ratio, "#.##"))
+
+    // Absorption
+    if is_strong_absorption
+        label.new(bar_index, high * 1.001, "ABS",
+                  style=label.style_label_down,
+                  color=color_absorption,
+                  textcolor=color.white,
+                  size=size.tiny,
+                  tooltip="Absorption Detected\nHigh Volume, Narrow Range\nAbsorption Ratio: " + str.tostring(absorption_normalized, "#.##") +
+                          "\nSmart Money likely positioning")
+
+    // Exhaustion Warning
+    if show_exhaustion_signal
+        label.new(bar_index, high * 1.002, "EXH",
+                  style=label.style_label_down,
+                  color=color_exhaustion,
+                  textcolor=color.white,
+                  size=size.tiny,
+                  tooltip="Exhaustion Warning\nExtreme Volume Detected\nVolume Ratio: " + str.tostring(volume_ratio, "#.##") +
+                          "\nWatch for reversal")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PLOTS FOR ALERTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-plotshape(is_aggressive_buy and show_aggressive, title="Aggressive Buy", style=shape.triangleup, location=location.belowbar, color=color_aggressive_buy, size=size.small)
-plotshape(is_aggressive_sell and show_aggressive, title="Aggressive Sell", style=shape.triangledown, location=location.abovebar, color=color_aggressive_sell, size=size.small)
-plotshape(is_accumulating and show_absorption, title="Accumulation", style=shape.circle, location=location.belowbar, color=color_absorption, size=size.tiny)
-plotshape(is_distributing and show_absorption, title="Distribution", style=shape.circle, location=location.abovebar, color=color.purple, size=size.tiny)
-plotshape(long_entry_signal and enable_position_trading, title="Long Entry Signal", style=shape.arrowup, location=location.belowbar, color=color_position_long, size=size.normal)
-plotshape(short_entry_signal and enable_position_trading, title="Short Entry Signal", style=shape.arrowdown, location=location.abovebar, color=color_position_short, size=size.normal)
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// POSITION STATUS TABLE
-// ═══════════════════════════════════════════════════════════════════════════════
-
-if show_position_table and enable_position_trading and barstate.islast
-    var table pos_table = table.new(position.bottom_right, 2, 12, border_width=1)
-
-    // Header
-    color header_bg = position_direction == 1 ? color_position_long : position_direction == -1 ? color_position_short : color.gray
-    table.cell(pos_table, 0, 0, "POSITION TRADE", bgcolor=header_bg, text_color=color.white, text_size=size.small)
-    table.cell(pos_table, 1, 0, "VALUE", bgcolor=header_bg, text_color=color.white, text_size=size.small)
-
-    // Position
-    string pos_str = position_direction == 1 ? "LONG" : position_direction == -1 ? "SHORT" : "FLAT"
-    table.cell(pos_table, 0, 1, "Position", text_size=size.small)
-    table.cell(pos_table, 1, 1, pos_str, bgcolor=header_bg, text_color=color.white, text_size=size.small)
-
-    // Entry Price
-    table.cell(pos_table, 0, 2, "Entry", text_size=size.small)
-    table.cell(pos_table, 1, 2, not na(entry_price) and position_direction != 0 ? str.tostring(entry_price, format.mintick) : "---", text_size=size.small)
-
-    // Stop Loss
-    table.cell(pos_table, 0, 3, "Stop (" + sl_type_tape + ")", text_size=size.small)
-    table.cell(pos_table, 1, 3, not na(stop_loss_price) and position_direction != 0 ? str.tostring(stop_loss_price, format.mintick) : "---", text_size=size.small)
-
-    // Risk %
-    table.cell(pos_table, 0, 4, "Risk %", text_size=size.small)
-    float risk_pct = position_direction != 0 and not na(entry_price) and not na(stop_loss_price) ? math.abs(entry_price - stop_loss_price) / entry_price * 100 : 0
-    table.cell(pos_table, 1, 4, position_direction != 0 ? str.tostring(risk_pct, "#.##") + "%" : "---", text_size=size.small)
-
-    // P&L
-    table.cell(pos_table, 0, 5, "Current P&L", text_size=size.small)
-    float pnl = position_direction == 1 ? (close - entry_price) / entry_price * 100 : position_direction == -1 ? (entry_price - close) / entry_price * 100 : 0
-    color pnl_bg = pnl > 0 ? color.new(color.green, 70) : pnl < 0 ? color.new(color.red, 70) : na
-    table.cell(pos_table, 1, 5, position_direction != 0 ? str.tostring(pnl, "#.##") + "%" : "---", bgcolor=pnl_bg, text_size=size.small)
-
-    // Bars in Trade
-    table.cell(pos_table, 0, 6, "Bars in Trade", text_size=size.small)
-    table.cell(pos_table, 1, 6, position_direction != 0 ? str.tostring(bars_since_entry) : "---", text_size=size.small)
-
-    // Market State
-    table.cell(pos_table, 0, 7, "Market State", text_size=size.small)
-    string state = no_trade_condition ? "NO TRADE" : is_in_compression ? "COMPRESSION" : is_accumulating ? "ACCUMULATION" : is_distributing ? "DISTRIBUTION" : "NEUTRAL"
-    color state_bg = no_trade_condition ? color.new(color.red, 70) : is_in_compression ? color.new(color.purple, 70) : is_accumulating ? color.new(color.blue, 70) : is_distributing ? color.new(color.orange, 70) : na
-    table.cell(pos_table, 1, 7, state, bgcolor=state_bg, text_size=size.small)
-
-    // Initiative Score
-    table.cell(pos_table, 0, 8, "Initiative", text_size=size.small)
-    table.cell(pos_table, 1, 8, str.tostring(initiative_score, "#.##"), bgcolor=initiative_score > initiative_threshold ? color.new(color.green, 70) : na, text_size=size.small)
-
-    // Volume Ratio
-    table.cell(pos_table, 0, 9, "Vol Ratio", text_size=size.small)
-    table.cell(pos_table, 1, 9, str.tostring(volume_ratio, "#.##"), bgcolor=volume_ratio > high_volume_threshold ? color.new(color.green, 70) : na, text_size=size.small)
-
-    // Volume Delta
-    table.cell(pos_table, 0, 10, "Vol Delta", text_size=size.small)
-    color vd_bg = volume_delta_estimate > 0 ? color.new(color.green, 70) : color.new(color.red, 70)
-    table.cell(pos_table, 1, 10, str.tostring(volume_delta_estimate, "#"), bgcolor=vd_bg, text_size=size.small)
-
-    // Last Exit Reason
-    table.cell(pos_table, 0, 11, "Last Exit", text_size=size.small)
-    table.cell(pos_table, 1, 11, exit_reason != "" ? exit_reason : "---", text_size=size.small)
+plotshape(is_aggressive_buy and show_aggressive, title="Aggressive Buy Signal", style=shape.triangleup, location=location.belowbar, color=color_aggressive_buy, size=size.small)
+plotshape(is_aggressive_sell and show_aggressive, title="Aggressive Sell Signal", style=shape.triangledown, location=location.abovebar, color=color_aggressive_sell, size=size.small)
+plotshape(is_strong_absorption and show_absorption, title="Absorption Signal", style=shape.circle, location=location.abovebar, color=color_absorption, size=size.tiny)
+plotshape(show_exhaustion_signal and show_exhaustion, title="Exhaustion Signal", style=shape.xcross, location=location.abovebar, color=color_exhaustion, size=size.small)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ALERT CONDITIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-alertcondition(long_entry_signal, title="Position Long Entry", message="Tape Reading: LONG Position Entry - Accumulation breakout confirmed")
-alertcondition(short_entry_signal, title="Position Short Entry", message="Tape Reading: SHORT Position Entry - Distribution breakdown confirmed")
-alertcondition(stop_triggered, title="Stop Loss Triggered", message="Tape Reading: Position STOPPED - Check chart for details")
-alertcondition(is_accumulating, title="Accumulation Detected", message="Tape Reading: ACCUMULATION zone detected - Smart Money positioning")
-alertcondition(is_distributing, title="Distribution Detected", message="Tape Reading: DISTRIBUTION detected - Potential breakdown")
-alertcondition(is_exhaustion_warning, title="Exhaustion Warning", message="Tape Reading: EXHAUSTION - Consider taking profits")
-alertcondition(no_trade_condition, title="No Trade Zone", message="Tape Reading: NO TRADE condition - Choppy/compressed market")
+alertcondition(is_aggressive_buy, title="Aggressive Buying", message="Tape Reading: Aggressive BUY detected - Initiative orders pushing price higher with strong volume")
+alertcondition(is_aggressive_sell, title="Aggressive Selling", message="Tape Reading: Aggressive SELL detected - Initiative orders pushing price lower with strong volume")
+alertcondition(is_strong_absorption, title="Absorption Zone", message="Tape Reading: ABSORPTION detected - Smart Money potentially accumulating/distributing")
+alertcondition(show_exhaustion_signal, title="Exhaustion Warning", message="Tape Reading: EXHAUSTION warning - Extreme volume detected, watch for reversal")
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// USAGE NOTES
+// TABLE: REAL-TIME METRICS DISPLAY
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// POSITION TRADING SYSTEM - PURE TAPE READING
+show_metrics_table = input.bool(false, "Show Metrics Table", group=group_visual, tooltip="Display real-time tape reading metrics in a table")
+
+if show_metrics_table and barstate.islast
+    var table metrics_table = table.new(position.top_right, 2, 7, border_width=1)
+
+    // Header
+    table.cell(metrics_table, 0, 0, "Metric", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(metrics_table, 1, 0, "Value", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+
+    // Volume Ratio
+    table.cell(metrics_table, 0, 1, "Volume Ratio", text_size=size.small)
+    table.cell(metrics_table, 1, 1, str.tostring(volume_ratio, "#.##"),
+               bgcolor=volume_ratio > high_volume_threshold ? color.new(color.green, 80) : na, text_size=size.small)
+
+    // Initiative Score
+    table.cell(metrics_table, 0, 2, "Initiative Score", text_size=size.small)
+    table.cell(metrics_table, 1, 2, str.tostring(initiative_score, "#.##"),
+               bgcolor=initiative_score > initiative_threshold ? color.new(color.yellow, 80) : na, text_size=size.small)
+
+    // Absorption Ratio
+    table.cell(metrics_table, 0, 3, "Absorption Ratio", text_size=size.small)
+    table.cell(metrics_table, 1, 3, str.tostring(absorption_normalized, "#.##"),
+               bgcolor=absorption_normalized > absorption_sensitivity ? color.new(color.blue, 80) : na, text_size=size.small)
+
+    // Volume Delta
+    table.cell(metrics_table, 0, 4, "Volume Delta", text_size=size.small)
+    delta_color = volume_delta > 0 ? color.new(color.green, 80) : color.new(color.red, 80)
+    table.cell(metrics_table, 1, 4, str.tostring(volume_delta, "#"), bgcolor=delta_color, text_size=size.small)
+
+    // Price Velocity
+    table.cell(metrics_table, 0, 5, "Price Velocity", text_size=size.small)
+    table.cell(metrics_table, 1, 5, str.tostring(price_velocity, "#.####"), text_size=size.small)
+
+    // Current Tape State
+    tape_state = is_aggressive_buy ? "AGG BUY" : is_aggressive_sell ? "AGG SELL" : is_strong_absorption ? "ABSORPTION" : show_exhaustion_signal ? "EXHAUSTION" : "NEUTRAL"
+    state_color = is_aggressive_buy ? color.new(color.green, 70) : is_aggressive_sell ? color.new(color.red, 70) : is_strong_absorption ? color.new(color.blue, 70) : show_exhaustion_signal ? color.new(color.orange, 70) : na
+    table.cell(metrics_table, 0, 6, "Tape State", text_size=size.small)
+    table.cell(metrics_table, 1, 6, tape_state, bgcolor=state_color, text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPLANATION & USAGE NOTES (visible in indicator info)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// HOW TO USE THIS INDICATOR:
 //
-// ENTRY LOGIC (NO traditional indicators):
-// 1. ACCUMULATION DETECTION:
-//    - High Absorption Ratio (volume / range)
-//    - Time at Price >= threshold (price stuck in range)
-//    - Volume Ratio >= 1.5
+// 1. AGGRESSIVE ORDERS (Green/Red Labels: BUY/SELL)
+//    - Initiative orders from Smart Money or strong participants
+//    - Look for: Strong candle body + High volume + Close near high/low
+//    - Trading: Follow the direction until exhaustion signals appear
 //
-// 2. BREAKOUT CONFIRMATION:
-//    - Price breaks accumulation zone high
-//    - Breakout Velocity > normal velocity
-//    - Initiative Score > 1.5 (strong candle body + volume)
-//    - Positive Volume Delta (buying pressure)
+// 2. ABSORPTION ZONES (Blue Labels: ABS)
+//    - Smart Money accumulating (before uptrend) or distributing (before downtrend)
+//    - Look for: High volume but narrow price range (price not moving despite volume)
+//    - Trading: Prepare for breakout in the direction of the eventual move
+//    - Best used in consolidation zones
 //
-// 3. TRAP AVOIDANCE:
-//    - No aggressive selling in prior 2 bars
-//    - No exhaustion warning active
-//    - Not in no-trade zone (chop/compression)
+// 3. EXHAUSTION (Orange Labels: EXH)
+//    - Climax volume indicating the move is complete
+//    - Look for: Extreme volume (3x+ average) followed by reversal
+//    - Trading: Consider taking profits or reversing position
 //
-// STOP LOSS TYPES (Tape-Derived):
-// 1. STRUCTURAL: Below accumulation zone low (invalidates thesis)
-// 2. VOLUME FAILURE: Closes below entry with high volume + negative delta
-// 3. TIME INVALIDATION: Breakout fails to advance after N bars
-// 4. HYBRID: Combination of all three
+// 4. VOLUME DELTA HISTOGRAM (Lower Pane)
+//    - Positive (green) = Net buying pressure
+//    - Negative (red) = Net selling pressure
+//    - Divergences with price can signal reversals
 //
-// EXIT CONDITIONS:
-// - Exhaustion Index triggered (climax volume + reversal)
-// - Opposite absorption detected
-// - Volume climax with rejection candle
-// - Stop loss hit
+// 5. CANDLE COLORING
+//    - Green candles = Aggressive buying
+//    - Red candles = Aggressive selling
+//    - Blue candles = Absorption (watch for breakout)
+//    - Orange candles = Exhaustion warning
 //
-// MARKET STATE FILTERS:
-// - NO TRADE: Compression without breakout, high chop, noise
-// - ACCUMULATION: Smart Money building position
-// - DISTRIBUTION: Smart Money exiting position
-// - COMPRESSION: Low volatility, watch for breakout
+// VALIDATION PROCESS:
+// - Test on 12 different charts (3 low TF, 3 medium TF, 3 high TF, 3 markets)
+// - Check if absorption zones lead to breakouts
+// - Verify exhaustion signals precede reversals
+// - Confirm aggressive signals align with strong directional moves
 //
-// This system allows trading PURELY from tape reading principles.
+// BEST PRACTICES:
+// - Use on liquid markets with reliable volume data
+// - Combine with price action and key levels
+// - Absorption works best in ranging markets (preparation phase)
+// - Aggressive signals work best in trending markets (momentum phase)
+// - Avoid choppy/low-volume periods
+//
+// LIMITATIONS:
+// - TradingView doesn't provide real delta, so we estimate it
+// - Works best on timeframes 1m to Daily
+// - Requires sufficient volume data (avoid illiquid assets)
+// - Not designed for fully automated trading (discretionary tool)

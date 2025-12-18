@@ -259,44 +259,29 @@ calc_take_profit(bool is_long, float entry, float sl, float tp_dist) =>
         tp := is_long ? entry + (tp_fixed_points * tick_size * tp_dist) : entry - (tp_fixed_points * tick_size * tp_dist)
     tp
 
-// === DELETE OLD LINES AND LABELS ===
-delete_entry_visuals() =>
-    line.delete(entry_line)
-    line.delete(sl_line)
-    line.delete(tp1_line)
-    line.delete(tp2_line)
-    line.delete(tp3_line)
-    label.delete(entry_label)
-    label.delete(sl_label)
-    label.delete(tp1_label)
-    label.delete(tp2_label)
-    label.delete(tp3_label)
+// === CHECK IF LEVELS ARE HIT (inline to modify global vars) ===
+if show_entry_management and signal_direction == 1  // Long position
+    if not na(stop_loss_price) and low <= stop_loss_price
+        sl_hit := true
+    if not na(take_profit_1) and high >= take_profit_1
+        tp1_hit := true
+    if not na(take_profit_2) and high >= take_profit_2
+        tp2_hit := true
+    if not na(take_profit_3) and high >= take_profit_3
+        tp3_hit := true
 
-// === CHECK IF LEVELS ARE HIT ===
-check_levels_hit() =>
-    if signal_direction == 1  // Long position
-        if not na(stop_loss_price) and low <= stop_loss_price
-            sl_hit := true
-        if not na(take_profit_1) and high >= take_profit_1
-            tp1_hit := true
-        if not na(take_profit_2) and high >= take_profit_2
-            tp2_hit := true
-        if not na(take_profit_3) and high >= take_profit_3
-            tp3_hit := true
-    else if signal_direction == -1  // Short position
-        if not na(stop_loss_price) and high >= stop_loss_price
-            sl_hit := true
-        if not na(take_profit_1) and low <= take_profit_1
-            tp1_hit := true
-        if not na(take_profit_2) and low <= take_profit_2
-            tp2_hit := true
-        if not na(take_profit_3) and low <= take_profit_3
-            tp3_hit := true
+if show_entry_management and signal_direction == -1  // Short position
+    if not na(stop_loss_price) and high >= stop_loss_price
+        sl_hit := true
+    if not na(take_profit_1) and low <= take_profit_1
+        tp1_hit := true
+    if not na(take_profit_2) and low <= take_profit_2
+        tp2_hit := true
+    if not na(take_profit_3) and low <= take_profit_3
+        tp3_hit := true
 
 // === ENTRY SIGNAL PROCESSING ===
 if show_entry_management
-    // Check if levels are hit
-    check_levels_hit()
 
     // Reset position if SL or all TPs hit
     bool should_reset = sl_hit or (tp1_hit and tp2_hit and tp3_hit and use_multiple_tps) or (tp1_hit and not use_multiple_tps)
@@ -305,7 +290,17 @@ if show_entry_management
     if is_aggressive_buy and (signal_direction != 1 or should_reset)
         // Reset on opposite signal if enabled
         if reset_on_opposite_signal or signal_direction == 0 or should_reset
-            delete_entry_visuals()
+            // Delete old visuals inline
+            line.delete(entry_line)
+            line.delete(sl_line)
+            line.delete(tp1_line)
+            line.delete(tp2_line)
+            line.delete(tp3_line)
+            label.delete(entry_label)
+            label.delete(sl_label)
+            label.delete(tp1_label)
+            label.delete(tp2_label)
+            label.delete(tp3_label)
 
             signal_direction := 1
             entry_price := close
@@ -323,7 +318,17 @@ if show_entry_management
     // New Short Entry Signal
     if is_aggressive_sell and (signal_direction != -1 or should_reset)
         if reset_on_opposite_signal or signal_direction == 0 or should_reset
-            delete_entry_visuals()
+            // Delete old visuals inline
+            line.delete(entry_line)
+            line.delete(sl_line)
+            line.delete(tp1_line)
+            line.delete(tp2_line)
+            line.delete(tp3_line)
+            label.delete(entry_label)
+            label.delete(sl_label)
+            label.delete(tp1_label)
+            label.delete(tp2_label)
+            label.delete(tp3_label)
 
             signal_direction := -1
             entry_price := close

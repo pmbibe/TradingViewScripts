@@ -1,0 +1,431 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © PmbibeIndicators
+// Darvas Box - Professional Indicator
+
+//@version=6
+indicator(
+    "Darvas Box - Professional",
+    overlay=true,
+    max_boxes_count=50,
+    max_lines_count=100,
+    max_labels_count=50
+)
+
+// ===================================================================
+// SECTION 1: INDICATOR INPUTS
+// ===================================================================
+
+// Box Detection Parameters
+minCandles = input.int(
+    80,
+    "Minimum Candles in Box",
+    minval=20,
+    maxval=200,
+    tooltip="Minimum number of candles required for valid box formation\n5m: 80-120 | 15m: 40-60 | 1h: 15-30"
+)
+
+maxCandles = input.int(
+    150,
+    "Maximum Candles in Box",
+    minval=50,
+    maxval=300,
+    tooltip="Maximum candles before box becomes stale"
+)
+
+maxBoxHeight = input.float(
+    5.0,
+    "Max Box Height %",
+    minval=1.0,
+    maxval=10.0,
+    step=0.1,
+    tooltip="Maximum allowed box height as percentage"
+)
+
+minBoxHeight = input.float(
+    1.0,
+    "Min Box Height %",
+    minval=0.1,
+    maxval=5.0,
+    step=0.1,
+    tooltip="Minimum box height for valid consolidation"
+)
+
+// Breakout Parameters
+breakoutThreshold = input.float(
+    0.5,
+    "Breakout Threshold %",
+    minval=0.1,
+    maxval=2.0,
+    step=0.1,
+    tooltip="Price must close this % above resistance for valid breakout"
+)
+
+volumeMultiplier = input.float(
+    2.0,
+    "Volume Multiplier",
+    minval=1.5,
+    maxval=5.0,
+    step=0.1,
+    tooltip="Breakout volume must be this multiple of average volume"
+)
+
+volumeLookback = input.int(
+    20,
+    "Volume Lookback Period",
+    minval=10,
+    maxval=50,
+    tooltip="Period for calculating average volume"
+)
+
+// Risk Management
+stopLossPercent = input.float(
+    3.0,
+    "Stop Loss %",
+    minval=1.0,
+    maxval=10.0,
+    step=0.5,
+    tooltip="Stop loss percentage below box support"
+)
+
+tp1Multiplier = input.float(
+    1.5,
+    "Take Profit 1 (Box Height x)",
+    minval=1.0,
+    maxval=5.0,
+    step=0.5
+)
+
+tp2Multiplier = input.float(
+    2.0,
+    "Take Profit 2 (Box Height x)",
+    minval=1.5,
+    maxval=10.0,
+    step=0.5
+)
+
+tp3Multiplier = input.float(
+    3.0,
+    "Take Profit 3 (Box Height x)",
+    minval=2.0,
+    maxval=15.0,
+    step=0.5
+)
+
+// Display Options
+showBoxes = input.bool(true, "Show Darvas Boxes", group="Display")
+showSupport = input.bool(true, "Show Support Lines", group="Display")
+showResistance = input.bool(true, "Show Resistance Lines", group="Display")
+showBreakoutLabels = input.bool(true, "Show Entry Signals", group="Display")
+showTPSL = input.bool(true, "Show TP/SL Levels", group="Display")
+showStats = input.bool(true, "Show Statistics Table", group="Display")
+
+// Colors
+boxColor = input.color(color.new(color.blue, 90), "Box Fill Color", group="Colors")
+resistanceColor = input.color(color.new(color.red, 0), "Resistance Color", group="Colors")
+supportColor = input.color(color.new(color.green, 0), "Support Color", group="Colors")
+breakoutColor = input.color(color.new(color.lime, 0), "Breakout Color", group="Colors")
+breakdownColor = input.color(color.new(color.red, 0), "Breakdown Color", group="Colors")
+
+// ===================================================================
+// SECTION 2: BOX DETECTION FUNCTIONS
+// ===================================================================
+
+// Function: Calculate if price is in consolidation
+isConsolidation(int lookback) =>
+    highestPrice = ta.highest(high, lookback)
+    lowestPrice = ta.lowest(low, lookback)
+    boxHeightVal = highestPrice - lowestPrice
+    boxHeightPct = (boxHeightVal / lowestPrice) * 100
+
+    // Check if box height is within acceptable range
+    validHeight = boxHeightPct >= minBoxHeight and boxHeightPct <= maxBoxHeight
+
+    // Return values
+    [highestPrice, lowestPrice, boxHeightVal, boxHeightPct, validHeight]
+
+// Function: Check if volume is declining (accumulation phase)
+isVolumeDeclining(int lookback) =>
+    quarterPeriod = math.max(1, lookback / 4)
+    threeQuarterOffset = math.max(0, lookback * 3 / 4)
+    firstHalfAvg = ta.sma(volume, quarterPeriod)[threeQuarterOffset]
+    lastHalfAvg = ta.sma(volume, quarterPeriod)
+    na(firstHalfAvg) ? false : lastHalfAvg < firstHalfAvg * 0.9  // Volume declined by at least 10%
+
+// Function: Validate complete box formation
+validateBox(int candleCount, float resistance, float support, bool volumeDeclining) =>
+    boxHeightVal = resistance - support
+    boxHeightPct = (boxHeightVal / support) * 100
+
+    // All conditions must be true
+    validDuration = candleCount >= minCandles and candleCount <= maxCandles
+    validHeight = boxHeightPct >= minBoxHeight and boxHeightPct <= maxBoxHeight
+    validVolume = volumeDeclining
+
+    isValid = validDuration and validHeight and validVolume
+    [isValid, boxHeightVal, boxHeightPct]
+
+// ===================================================================
+// SECTION 3: BREAKOUT DETECTION
+// ===================================================================
+
+// Function: Check for valid breakout
+checkBreakout(float resistance, float currentClose, float currentVolume) =>
+    avgVolume = ta.sma(volume, volumeLookback)
+
+    // Breakout conditions
+    priceBreakout = not na(resistance) and currentClose > resistance * (1 + breakoutThreshold / 100)
+    volumeBreakout = not na(avgVolume) and currentVolume > avgVolume * volumeMultiplier
+    greenCandle = close > open
+    bodySize = math.abs(close - open)
+    smallWick = bodySize > 0 ? (high - close) < (bodySize * 0.3) : false  // Upper wick < 30% of body
+
+    // All must be true
+    isBreakoutSignal = priceBreakout and volumeBreakout and greenCandle and smallWick
+    confidence = na(avgVolume) or avgVolume == 0 ? 0.0 : (currentVolume / avgVolume) * 100  // Confidence score
+
+    [isBreakoutSignal, confidence, avgVolume]
+
+// Function: Check for support breakdown (exit signal)
+checkBreakdown(float support, float currentClose) =>
+    priceBreakdown = not na(support) and currentClose < support * 0.995  // Closes 0.5% below support
+    redCandle = close < open
+
+    isBreakdownSignal = priceBreakdown and redCandle
+    isBreakdownSignal
+
+// ===================================================================
+// SECTION 4: BOX TRACKING (STATE MACHINE)
+// ===================================================================
+
+// Variables to track current box
+var float currentResistance = na
+var float currentSupport = na
+var int boxStartBar = na
+var bool inBox = false
+var box currentBoxDrawing = na
+
+// Variables for tracking box detection
+var bool boxFound = false
+var float foundResistance = na
+var float foundSupport = na
+var int foundStartBar = na
+
+// Detect new box formation when not in a box
+boxFound := false
+foundResistance := na
+foundSupport := na
+foundStartBar := na
+
+if not inBox
+    // Search for valid box from minimum to maximum candle range
+    for i = minCandles to maxCandles
+        if not boxFound
+            [res, sup, heightVal, heightPct, valid] = isConsolidation(i)
+            volDecline = isVolumeDeclining(i)
+            [isValid, boxH, boxHPct] = validateBox(i, res, sup, volDecline)
+
+            if isValid
+                foundResistance := res
+                foundSupport := sup
+                foundStartBar := bar_index - i
+                boxFound := true
+
+// Apply found box
+if boxFound and not inBox
+    currentResistance := foundResistance
+    currentSupport := foundSupport
+    boxStartBar := foundStartBar
+    inBox := true
+
+    // Draw box
+    if showBoxes
+        currentBoxDrawing := box.new(
+            boxStartBar,
+            currentSupport,
+            bar_index,
+            currentResistance,
+            border_color=resistanceColor,
+            bgcolor=boxColor,
+            border_width=2
+        )
+
+// Update box if still valid
+if inBox and not na(currentBoxDrawing)
+    box.set_right(currentBoxDrawing, bar_index)
+
+    // Check if box is too old
+    candlesInBox = bar_index - boxStartBar
+    if candlesInBox > maxCandles
+        inBox := false  // Box too old
+        currentResistance := na
+        currentSupport := na
+
+// ===================================================================
+// SECTION 5: ENTRY & EXIT SIGNALS
+// ===================================================================
+
+// Check for breakout (BUY signal)
+[isBreakoutDetected, confidence, avgVol] = checkBreakout(currentResistance, close, volume)
+
+buySignal = inBox and isBreakoutDetected
+
+// Variables for TP/SL levels
+var float lastEntryPrice = na
+var float lastStopLoss = na
+var float lastTP1 = na
+var float lastTP2 = na
+var float lastTP3 = na
+
+if buySignal
+    // Calculate TP and SL before resetting box
+    boxHeightCalc = currentResistance - currentSupport
+    lastEntryPrice := close
+    lastStopLoss := currentSupport * (1 - stopLossPercent / 100)
+    lastTP1 := close + (boxHeightCalc * tp1Multiplier)
+    lastTP2 := close + (boxHeightCalc * tp2Multiplier)
+    lastTP3 := close + (boxHeightCalc * tp3Multiplier)
+
+    // Draw entry label
+    if showBreakoutLabels
+        volRatio = na(avgVol) or avgVol == 0 ? 0.0 : volume / avgVol
+        label.new(
+            bar_index,
+            low,
+            text="BUY\n" + str.tostring(confidence, "#.0") + "%\nVol: " + str.tostring(volRatio, "#.#") + "x",
+            style=label.style_label_up,
+            color=breakoutColor,
+            textcolor=color.white,
+            size=size.normal
+        )
+
+    // Draw TP/SL lines
+    if showTPSL
+        line.new(bar_index, lastStopLoss, bar_index + 50, lastStopLoss,
+                 color=color.red, style=line.style_dashed, width=2)
+        line.new(bar_index, lastTP1, bar_index + 50, lastTP1,
+                 color=color.green, style=line.style_solid, width=1)
+        line.new(bar_index, lastTP2, bar_index + 50, lastTP2,
+                 color=color.green, style=line.style_solid, width=1)
+        line.new(bar_index, lastTP3, bar_index + 50, lastTP3,
+                 color=color.green, style=line.style_solid, width=1)
+
+        // Add labels for TP/SL levels
+        label.new(bar_index + 50, lastStopLoss, "SL: " + str.tostring(lastStopLoss, "#.#####"),
+                  style=label.style_label_left, color=color.red, textcolor=color.white, size=size.small)
+        label.new(bar_index + 50, lastTP1, "TP1: " + str.tostring(lastTP1, "#.#####"),
+                  style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
+        label.new(bar_index + 50, lastTP2, "TP2: " + str.tostring(lastTP2, "#.#####"),
+                  style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
+        label.new(bar_index + 50, lastTP3, "TP3: " + str.tostring(lastTP3, "#.#####"),
+                  style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
+
+    // Reset box state after breakout
+    inBox := false
+    currentResistance := na
+    currentSupport := na
+
+// Check for breakdown (SELL signal)
+isBreakdownDetected = checkBreakdown(currentSupport, close)
+
+sellSignal = inBox and isBreakdownDetected
+
+if sellSignal
+    // Draw breakdown label
+    if showBreakoutLabels
+        label.new(
+            bar_index,
+            high,
+            text="SELL\nBreakdown",
+            style=label.style_label_down,
+            color=breakdownColor,
+            textcolor=color.white,
+            size=size.normal
+        )
+
+    // Reset box state after breakdown
+    inBox := false
+    currentResistance := na
+    currentSupport := na
+
+// ===================================================================
+// SECTION 6: VISUALIZATION
+// ===================================================================
+
+// Plot current box levels
+plot(inBox and showResistance ? currentResistance : na, "Resistance", color=resistanceColor, linewidth=2, style=plot.style_line)
+plot(inBox and showSupport ? currentSupport : na, "Support", color=supportColor, linewidth=2, style=plot.style_line)
+
+// Background color for active box
+bgcolor(inBox ? color.new(color.blue, 95) : na)
+
+// Plot buy/sell markers on chart
+plotshape(buySignal, "Buy Signal", shape.triangleup, location.belowbar, breakoutColor, size=size.small)
+plotshape(sellSignal, "Sell Signal", shape.triangledown, location.abovebar, breakdownColor, size=size.small)
+
+// ===================================================================
+// SECTION 7: STATISTICS TABLE
+// ===================================================================
+
+// Track performance
+var int totalSignals = 0
+var int totalBreakdowns = 0
+
+if buySignal
+    totalSignals += 1
+
+if sellSignal
+    totalBreakdowns += 1
+
+// Display statistics table
+if showStats
+    var table statsTable = table.new(position.top_right, 2, 7, border_width=1)
+
+    if barstate.islast
+        // Header
+        table.cell(statsTable, 0, 0, "Darvas Box Stats", bgcolor=color.gray, text_color=color.white)
+        table.cell(statsTable, 1, 0, "", bgcolor=color.gray)
+
+        // Statistics rows
+        table.cell(statsTable, 0, 1, "Buy Signals", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 1, 1, str.tostring(totalSignals), bgcolor=color.new(color.gray, 80))
+
+        table.cell(statsTable, 0, 2, "Sell Signals", bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 1, 2, str.tostring(totalBreakdowns), bgcolor=color.new(color.gray, 90))
+
+        table.cell(statsTable, 0, 3, "Current Box", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 1, 3, inBox ? "Active" : "Searching", bgcolor=inBox ? color.new(color.green, 70) : color.new(color.gray, 80))
+
+        table.cell(statsTable, 0, 4, "Resistance", bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 1, 4, inBox ? str.tostring(currentResistance, "#.#####") : "-", bgcolor=color.new(color.gray, 90))
+
+        table.cell(statsTable, 0, 5, "Support", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 1, 5, inBox ? str.tostring(currentSupport, "#.#####") : "-", bgcolor=color.new(color.gray, 80))
+
+        boxHeightDisplay = inBox and not na(currentResistance) and not na(currentSupport) ?
+             str.tostring((currentResistance - currentSupport) / currentSupport * 100, "#.##") + "%" : "-"
+        table.cell(statsTable, 0, 6, "Box Height %", bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 1, 6, boxHeightDisplay, bgcolor=color.new(color.gray, 90))
+
+// ===================================================================
+// SECTION 8: ALERTS
+// ===================================================================
+
+// Runtime alerts
+if buySignal
+    alert("Darvas Box BREAKOUT! Entry: " + str.tostring(close) +
+          " | SL: " + str.tostring(lastStopLoss) +
+          " | TP1: " + str.tostring(lastTP1) +
+          " | TP2: " + str.tostring(lastTP2) +
+          " | TP3: " + str.tostring(lastTP3), alert.freq_once_per_bar)
+
+if sellSignal
+    alert("Darvas Box BREAKDOWN! Exit all positions! Price: " + str.tostring(close), alert.freq_once_per_bar)
+
+// Alert conditions for manual alert setup
+alertcondition(buySignal, "Darvas Breakout BUY", "DARVAS BOX BREAKOUT - BUY SIGNAL!")
+alertcondition(sellSignal, "Darvas Breakdown SELL", "DARVAS BOX BREAKDOWN - SELL SIGNAL!")
+alertcondition(inBox and not inBox[1], "New Box Formed", "New Darvas Box has formed")
+
+// ===================================================================
+// END OF INDICATOR
+// ===================================================================

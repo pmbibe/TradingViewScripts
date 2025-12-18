@@ -629,11 +629,8 @@ if show_signals_table and show_entry_management and barstate.islast
     string pnl_str = "---"
     color pnl_bg = na
     if signal_direction != 0 and not na(entry_price)
-        float pnl_pct = signal_direction == 1 ?
-            (close - entry_price) / entry_price * 100 :
-            (entry_price - close) / entry_price * 100
-        float pnl_r = not na(risk_amount) and risk_amount != 0 ?
-            (signal_direction == 1 ? (close - entry_price) : (entry_price - close)) / risk_amount : 0
+        float pnl_pct = signal_direction == 1 ? (close - entry_price) / entry_price * 100 : (entry_price - close) / entry_price * 100
+        float pnl_r = not na(risk_amount) and risk_amount != 0 ? (signal_direction == 1 ? (close - entry_price) : (entry_price - close)) / risk_amount : 0
         pnl_str := str.tostring(pnl_pct, "#.##") + "% (" + str.tostring(pnl_r, "#.##") + "R)"
         pnl_bg := pnl_pct > 0 ? color.new(color.green, 70) : pnl_pct < 0 ? color.new(color.red, 70) : na
     table.cell(signals_table, 1, pnl_row, pnl_str, bgcolor=pnl_bg, text_size=size.small)

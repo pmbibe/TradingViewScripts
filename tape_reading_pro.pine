@@ -462,22 +462,19 @@ if exit_opposite_absorption_long or exit_opposite_absorption_short
 if tp1_triggered and not tp1_hit
     tp1_hit := true
     if show_historical_entries
-        string tp_label = position_dir == 1 ? "TP1" : "TP1"
         float label_price = position_dir == 1 ? high : low
-        label.style label_style = position_dir == 1 ? label.style_label_down : label.style_label_up
-        label.new(bar_index, label_price, tp_label,
-                  style=label_style, color=color_tp_line,
-                  textcolor=color.white, size=size.tiny,
+        label.new(bar_index, label_price, "TP1",
+                  style=position_dir == 1 ? label.style_label_down : label.style_label_up,
+                  color=color_tp_line, textcolor=color.white, size=size.tiny,
                   tooltip="TP1 - MOMENTUM (" + str.tostring(tp1_size_pct, "#") + "% partial)\nPrice: " + str.tostring(close, format.mintick))
 
 // === PROCESS TP2 / FULL EXIT ===
 if tp2_triggered and position_dir != 0
     if show_historical_entries and not na(tp_reason)
         float label_price = position_dir == 1 ? high : low
-        label.style label_style = position_dir == 1 ? label.style_label_down : label.style_label_up
         label.new(bar_index, label_price, "EXIT",
-                  style=label_style, color=color_exhaustion,
-                  textcolor=color.white, size=size.tiny,
+                  style=position_dir == 1 ? label.style_label_down : label.style_label_up,
+                  color=color_exhaustion, textcolor=color.white, size=size.tiny,
                   tooltip=tp_reason + "\nPrice: " + str.tostring(close, format.mintick))
     exit_reason := tp_reason
     // Reset position
@@ -494,10 +491,9 @@ if tp2_triggered and position_dir != 0
 if stop_triggered and position_dir != 0
     if show_historical_entries and not na(sl_reason)
         float label_price = position_dir == 1 ? low : high
-        label.style label_style = position_dir == 1 ? label.style_label_up : label.style_label_down
         label.new(bar_index, label_price, "SL",
-                  style=label_style, color=color_sl_line,
-                  textcolor=color.white, size=size.tiny,
+                  style=position_dir == 1 ? label.style_label_up : label.style_label_down,
+                  color=color_sl_line, textcolor=color.white, size=size.tiny,
                   tooltip=sl_reason + "\nPrice: " + str.tostring(close, format.mintick))
     exit_reason := sl_reason
     // Reset position

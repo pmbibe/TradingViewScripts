@@ -332,13 +332,22 @@ checkBreakout(float resistance, float currentClose, float currentVolume) =>
 
     [isBreakoutSignal, confidence, avgVolume]
 
-// Function: Check for support breakdown (exit signal)
-checkBreakdown(float support, float currentClose) =>
-    priceBreakdown = not na(support) and currentClose < support * 0.995  // Closes 0.5% below support
-    redCandle = close < open
+// Function: Check for valid breakdown (SHORT entry signal)
+checkBreakdown(float support, float currentClose, float currentVolume) =>
+    avgVolume = ta.sma(volume, volumeLookback)
 
-    isBreakdownSignal = priceBreakdown and redCandle
-    isBreakdownSignal
+    // Breakdown conditions (mirror of breakout logic)
+    priceBreakdown = not na(support) and currentClose < support * (1 - breakoutThreshold / 100)
+    volumeBreakdown = not na(avgVolume) and currentVolume > avgVolume * volumeMultiplier
+    redCandle = close < open
+    bodySize = math.abs(open - close)
+    smallWick = bodySize > 0 ? (close - low) < (bodySize * 0.3) : false  // Lower wick < 30% of body
+
+    // All must be true
+    isBreakdownSignal = priceBreakdown and volumeBreakdown and redCandle and smallWick
+    confidenceShort = na(avgVolume) or avgVolume == 0 ? 0.0 : (currentVolume / avgVolume) * 100  // Confidence score
+
+    [isBreakdownSignal, confidenceShort, avgVolume]
 
 // ===================================================================
 // SECTION 6: BOX TRACKING (STATE MACHINE)
@@ -432,12 +441,19 @@ if inBox and not na(currentBoxDrawing)
 
 buySignal = inBox and isBreakoutDetected
 
-// Variables for TP/SL levels
+// Variables for LONG TP/SL levels
 var float lastEntryPrice = na
 var float lastStopLoss = na
 var float lastTP1 = na
 var float lastTP2 = na
 var float lastTP3 = na
+
+// Variables for SHORT TP/SL levels
+var float lastShortEntry = na
+var float lastShortSL = na
+var float lastShortTP1 = na
+var float lastShortTP2 = na
+var float lastShortTP3 = na
 
 if buySignal
     // Calculate TP and SL before resetting box
@@ -489,23 +505,54 @@ if buySignal
     currentSupport := na
     currentBoxCandleCount := 0
 
-// Check for breakdown (SELL signal)
-isBreakdownDetected = checkBreakdown(currentSupport, close)
+// Check for breakdown (SHORT entry signal)
+[isBreakdownDetected, confidenceShort, avgVolShort] = checkBreakdown(currentSupport, close, volume)
 
-sellSignal = inBox and isBreakdownDetected
+shortSignal = inBox and isBreakdownDetected
 
-if sellSignal
-    // Draw breakdown label
+if shortSignal
+    // Calculate SHORT TP and SL before resetting box
+    boxHeightCalc = currentResistance - currentSupport
+    lastShortEntry := close
+    lastShortSL := currentResistance * (1 + slBufferPercent / 100)  // SL above resistance with buffer
+    lastShortTP1 := close - (boxHeightCalc * tp1Multiplier)
+    lastShortTP2 := close - (boxHeightCalc * tp2Multiplier)
+    lastShortTP3 := close - (boxHeightCalc * tp3Multiplier)
+
+    // Draw SHORT entry label
     if showBreakoutLabels
+        volRatioShort = na(avgVolShort) or avgVolShort == 0 ? 0.0 : volume / avgVolShort
+        [qualityShort, qcShort, qbShort] = assessBoxQuality(currentBoxCandleCount)
         label.new(
             bar_index,
             high,
-            text="SELL\nBreakdown",
+            text="SHORT [" + qualityShort + "]\n" + str.tostring(confidenceShort, "#.0") + "%\nVol: " + str.tostring(volRatioShort, "#.#") + "x",
             style=label.style_label_down,
             color=breakdownColor,
             textcolor=color.white,
             size=size.normal
         )
+
+    // Draw SHORT TP/SL lines
+    if showTPSL
+        line.new(bar_index, lastShortSL, bar_index + 50, lastShortSL,
+                 color=color.red, style=line.style_dashed, width=2)
+        line.new(bar_index, lastShortTP1, bar_index + 50, lastShortTP1,
+                 color=color.green, style=line.style_solid, width=1)
+        line.new(bar_index, lastShortTP2, bar_index + 50, lastShortTP2,
+                 color=color.green, style=line.style_solid, width=1)
+        line.new(bar_index, lastShortTP3, bar_index + 50, lastShortTP3,
+                 color=color.green, style=line.style_solid, width=1)
+
+        // Add labels for SHORT TP/SL levels
+        label.new(bar_index + 50, lastShortSL, "SL: " + str.tostring(lastShortSL, "#.#####"),
+                  style=label.style_label_left, color=color.red, textcolor=color.white, size=size.small)
+        label.new(bar_index + 50, lastShortTP1, "TP1: " + str.tostring(lastShortTP1, "#.#####"),
+                  style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
+        label.new(bar_index + 50, lastShortTP2, "TP2: " + str.tostring(lastShortTP2, "#.#####"),
+                  style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
+        label.new(bar_index + 50, lastShortTP3, "TP3: " + str.tostring(lastShortTP3, "#.#####"),
+                  style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
 
     // Reset box state after breakdown
     inBox := false
@@ -531,23 +578,23 @@ else
 
 bgcolor(inBox and showQualityIndicator ? currentBgColor : (inBox ? color.new(color.blue, 95) : na))
 
-// Plot buy/sell markers on chart
+// Plot buy/short markers on chart
 plotshape(buySignal, "Buy Signal", shape.triangleup, location.belowbar, breakoutColor, size=size.small)
-plotshape(sellSignal, "Sell Signal", shape.triangledown, location.abovebar, breakdownColor, size=size.small)
+plotshape(shortSignal, "Short Signal", shape.triangledown, location.abovebar, breakdownColor, size=size.small)
 
 // ===================================================================
 // SECTION 9: STATISTICS TABLE
 // ===================================================================
 
 // Track performance
-var int totalSignals = 0
-var int totalBreakdowns = 0
+var int totalLongSignals = 0
+var int totalShortSignals = 0
 
 if buySignal
-    totalSignals += 1
+    totalLongSignals += 1
 
-if sellSignal
-    totalBreakdowns += 1
+if shortSignal
+    totalShortSignals += 1
 
 // Display statistics table
 if showStats
@@ -573,11 +620,11 @@ if showStats
         table.cell(statsTable, 1, 2, str.tostring(minCandles) + "/" + str.tostring(maxCandles), bgcolor=color.new(color.gray, 90))
 
         // Statistics rows
-        table.cell(statsTable, 0, 3, "Buy Signals", bgcolor=color.new(color.gray, 80))
-        table.cell(statsTable, 1, 3, str.tostring(totalSignals), bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 0, 3, "Long Signals", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 1, 3, str.tostring(totalLongSignals), bgcolor=color.new(color.green, 70))
 
-        table.cell(statsTable, 0, 4, "Sell Signals", bgcolor=color.new(color.gray, 90))
-        table.cell(statsTable, 1, 4, str.tostring(totalBreakdowns), bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 0, 4, "Short Signals", bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 1, 4, str.tostring(totalShortSignals), bgcolor=color.new(color.red, 70))
 
         // Box quality status
         qualityBgColor = inBox ? cqFill : color.new(color.gray, 80)
@@ -605,19 +652,24 @@ if showStats
 
 // Runtime alerts
 if buySignal
-    [alertQuality, aqc, aqb] = assessBoxQuality(currentBoxCandleCount)
-    alert("Darvas Box BREAKOUT [" + alertQuality + "]! Entry: " + str.tostring(close) +
+    [alertQualityLong, aqcLong, aqbLong] = assessBoxQuality(currentBoxCandleCount)
+    alert("Darvas Box LONG [" + alertQualityLong + "]! Entry: " + str.tostring(close) +
           " | SL: " + str.tostring(lastStopLoss) +
           " | TP1: " + str.tostring(lastTP1) +
           " | TP2: " + str.tostring(lastTP2) +
           " | TP3: " + str.tostring(lastTP3), alert.freq_once_per_bar)
 
-if sellSignal
-    alert("Darvas Box BREAKDOWN! Exit all positions! Price: " + str.tostring(close), alert.freq_once_per_bar)
+if shortSignal
+    [alertQualityShort, aqcShort, aqbShort] = assessBoxQuality(currentBoxCandleCount)
+    alert("Darvas Box SHORT [" + alertQualityShort + "]! Entry: " + str.tostring(close) +
+          " | SL: " + str.tostring(lastShortSL) +
+          " | TP1: " + str.tostring(lastShortTP1) +
+          " | TP2: " + str.tostring(lastShortTP2) +
+          " | TP3: " + str.tostring(lastShortTP3), alert.freq_once_per_bar)
 
 // Alert conditions for manual alert setup
-alertcondition(buySignal, "Darvas Breakout BUY", "DARVAS BOX BREAKOUT - BUY SIGNAL!")
-alertcondition(sellSignal, "Darvas Breakdown SELL", "DARVAS BOX BREAKDOWN - SELL SIGNAL!")
+alertcondition(buySignal, "Darvas Breakout LONG", "DARVAS BOX BREAKOUT - LONG SIGNAL!")
+alertcondition(shortSignal, "Darvas Breakdown SHORT", "DARVAS BOX BREAKDOWN - SHORT SIGNAL!")
 alertcondition(inBox and not inBox[1], "New Box Formed", "New Darvas Box has formed")
 
 // ===================================================================

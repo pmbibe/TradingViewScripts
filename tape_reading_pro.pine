@@ -132,6 +132,40 @@ is_exhaustion = is_bullish_exhaustion or is_bearish_exhaustion
 is_exhaustion_warning = is_extreme_volume and not is_exhaustion[1]
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// TAPE BEHAVIOR DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// === AGGRESSIVE BUYING/SELLING (Initiative Orders) ===
+is_aggressive_buy = show_aggressive and
+                     candle_direction == 1 and
+                     initiative_score > initiative_threshold and
+                     volume_ratio > high_volume_threshold and
+                     close_position > 0.7  // Close near high
+
+is_aggressive_sell = show_aggressive and
+                      candle_direction == -1 and
+                      initiative_score > initiative_threshold and
+                      volume_ratio > high_volume_threshold and
+                      close_position < 0.3  // Close near low
+
+// === ABSORPTION DETECTION ===
+// High volume but narrow range = Smart Money absorbing orders
+is_absorption = show_absorption and
+                 absorption_normalized > absorption_sensitivity and
+                 volume_ratio > high_volume_threshold
+
+// Confirm absorption over multiple bars for stronger signal
+absorption_count = 0
+for i = 0 to absorption_lookback - 1
+    if absorption_normalized[i] > absorption_sensitivity and volume_ratio[i] > high_volume_threshold
+        absorption_count := absorption_count + 1
+
+is_strong_absorption = is_absorption and absorption_count >= 2
+
+// === EXHAUSTION ===
+show_exhaustion_signal = show_exhaustion and is_exhaustion_warning
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ADVANCED TAPE READING VARIABLES
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -185,40 +219,6 @@ is_accumulation_zone = accumulation_score >= 2.0
 var float last_absorption_delta = na
 if is_strong_absorption
     last_absorption_delta := volume_delta
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TAPE BEHAVIOR DETECTION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// === AGGRESSIVE BUYING/SELLING (Initiative Orders) ===
-is_aggressive_buy = show_aggressive and
-                     candle_direction == 1 and
-                     initiative_score > initiative_threshold and
-                     volume_ratio > high_volume_threshold and
-                     close_position > 0.7  // Close near high
-
-is_aggressive_sell = show_aggressive and
-                      candle_direction == -1 and
-                      initiative_score > initiative_threshold and
-                      volume_ratio > high_volume_threshold and
-                      close_position < 0.3  // Close near low
-
-// === ABSORPTION DETECTION ===
-// High volume but narrow range = Smart Money absorbing orders
-is_absorption = show_absorption and
-                 absorption_normalized > absorption_sensitivity and
-                 volume_ratio > high_volume_threshold
-
-// Confirm absorption over multiple bars for stronger signal
-absorption_count = 0
-for i = 0 to absorption_lookback - 1
-    if absorption_normalized[i] > absorption_sensitivity and volume_ratio[i] > high_volume_threshold
-        absorption_count := absorption_count + 1
-
-is_strong_absorption = is_absorption and absorption_count >= 2
-
-// === EXHAUSTION ===
-show_exhaustion_signal = show_exhaustion and is_exhaustion_warning
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENTRY MANAGEMENT - TAPE-DERIVED STOP LOSS (NOT PERCENTAGE-BASED)

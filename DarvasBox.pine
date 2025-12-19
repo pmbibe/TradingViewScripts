@@ -15,20 +15,30 @@ indicator(
 // SECTION 1: INDICATOR INPUTS
 // ===================================================================
 
-// Box Detection Parameters
-minCandles = input.int(
+// Timeframe Mode Selection
+autoMode = input.bool(
+    true,
+    "Auto-Adjust Parameters by Timeframe",
+    group="Timeframe Settings",
+    tooltip="When enabled, box parameters automatically adjust based on chart timeframe"
+)
+
+// Box Detection Parameters (Manual Mode)
+minCandlesInput = input.int(
     80,
     "Minimum Candles in Box",
     minval=20,
     maxval=200,
+    group="Manual Box Parameters",
     tooltip="Minimum number of candles required for valid box formation\n5m: 80-120 | 15m: 40-60 | 1h: 15-30"
 )
 
-maxCandles = input.int(
+maxCandlesInput = input.int(
     150,
     "Maximum Candles in Box",
     minval=50,
     maxval=300,
+    group="Manual Box Parameters",
     tooltip="Maximum candles before box becomes stale"
 )
 
@@ -118,16 +128,153 @@ showResistance = input.bool(true, "Show Resistance Lines", group="Display")
 showBreakoutLabels = input.bool(true, "Show Entry Signals", group="Display")
 showTPSL = input.bool(true, "Show TP/SL Levels", group="Display")
 showStats = input.bool(true, "Show Statistics Table", group="Display")
+showQualityIndicator = input.bool(true, "Show Box Quality Indicator", group="Display")
 
 // Colors
-boxColor = input.color(color.new(color.blue, 90), "Box Fill Color", group="Colors")
 resistanceColor = input.color(color.new(color.red, 0), "Resistance Color", group="Colors")
 supportColor = input.color(color.new(color.green, 0), "Support Color", group="Colors")
 breakoutColor = input.color(color.new(color.lime, 0), "Breakout Color", group="Colors")
 breakdownColor = input.color(color.new(color.red, 0), "Breakdown Color", group="Colors")
 
+// Quality Colors (fixed for consistency)
+colorIdeal = color.new(color.green, 85)
+colorHighRisk = color.new(color.orange, 85)
+colorMomentumLoss = color.new(color.red, 85)
+borderIdeal = color.green
+borderHighRisk = color.orange
+borderMomentumLoss = color.red
+
 // ===================================================================
-// SECTION 2: BOX DETECTION FUNCTIONS
+// SECTION 2: DYNAMIC TIMEFRAME CONFIGURATION
+// ===================================================================
+
+// Detect timeframe and set parameters
+getTimeframeParams() =>
+    int tfMinutes = timeframe.isintraday ? timeframe.multiplier :
+                    timeframe.isdaily ? 1440 :
+                    timeframe.isweekly ? 10080 : 43200
+
+    // Adjust for minute vs hour timeframes
+    if timeframe.isintraday and str.contains(timeframe.period, "H")
+        tfMinutes := timeframe.multiplier * 60
+
+    // Default values
+    int minC = 50
+    int maxC = 100
+    int idealMin = 40
+    int idealMax = 60
+    int riskThreshold = 30
+    int staleThreshold = 80
+
+    // 5-minute timeframe
+    if tfMinutes == 5
+        minC := 80
+        maxC := 150
+        idealMin := 80
+        idealMax := 120
+        riskThreshold := 50
+        staleThreshold := 150
+    // 15-minute timeframe
+    else if tfMinutes == 15
+        minC := 40
+        maxC := 80
+        idealMin := 40
+        idealMax := 60
+        riskThreshold := 30
+        staleThreshold := 80
+    // 1-hour timeframe
+    else if tfMinutes == 60
+        minC := 15
+        maxC := 50
+        idealMin := 15
+        idealMax := 30
+        riskThreshold := 10
+        staleThreshold := 50
+    // 4-hour timeframe
+    else if tfMinutes == 240
+        minC := 10
+        maxC := 40
+        idealMin := 10
+        idealMax := 25
+        riskThreshold := 7
+        staleThreshold := 40
+    // Daily timeframe
+    else if tfMinutes == 1440
+        minC := 5
+        maxC := 30
+        idealMin := 5
+        idealMax := 20
+        riskThreshold := 3
+        staleThreshold := 30
+    // Default for other timeframes
+    else
+        minC := 50
+        maxC := 100
+        idealMin := 40
+        idealMax := 60
+        riskThreshold := 30
+        staleThreshold := 100
+
+    [minC, maxC, idealMin, idealMax, riskThreshold, staleThreshold]
+
+// Get dynamic or manual parameters
+[autoMinCandles, autoMaxCandles, idealMinCandles, idealMaxCandles, highRiskThreshold, momentumLossThreshold] = getTimeframeParams()
+
+// Apply auto or manual mode
+minCandles = autoMode ? autoMinCandles : minCandlesInput
+maxCandles = autoMode ? autoMaxCandles : maxCandlesInput
+
+// ===================================================================
+// SECTION 3: BOX QUALITY ASSESSMENT
+// ===================================================================
+
+// Function: Assess box quality based on candle count
+assessBoxQuality(int candleCount) =>
+    string quality = "SEARCHING"
+    color qualityColor = color.gray
+    color qualityBorder = color.gray
+
+    if autoMode
+        if candleCount >= idealMinCandles and candleCount <= idealMaxCandles
+            quality := "IDEAL"
+            qualityColor := colorIdeal
+            qualityBorder := borderIdeal
+        else if candleCount < highRiskThreshold
+            quality := "HIGH RISK"
+            qualityColor := colorHighRisk
+            qualityBorder := borderHighRisk
+        else if candleCount > momentumLossThreshold
+            quality := "STALE"
+            qualityColor := colorMomentumLoss
+            qualityBorder := borderMomentumLoss
+        else if candleCount < idealMinCandles
+            quality := "FORMING"
+            qualityColor := colorHighRisk
+            qualityBorder := borderHighRisk
+        else
+            quality := "EXTENDED"
+            qualityColor := colorMomentumLoss
+            qualityBorder := borderMomentumLoss
+    else
+        // Manual mode - simple assessment
+        midPoint = (minCandles + maxCandles) / 2
+        if candleCount >= minCandles and candleCount <= midPoint
+            quality := "IDEAL"
+            qualityColor := colorIdeal
+            qualityBorder := borderIdeal
+        else if candleCount > midPoint and candleCount <= maxCandles
+            quality := "EXTENDED"
+            qualityColor := colorHighRisk
+            qualityBorder := borderHighRisk
+        else
+            quality := "OUT OF RANGE"
+            qualityColor := colorMomentumLoss
+            qualityBorder := borderMomentumLoss
+
+    [quality, qualityColor, qualityBorder]
+
+// ===================================================================
+// SECTION 4: BOX DETECTION FUNCTIONS
 // ===================================================================
 
 // Function: Calculate if price is in consolidation
@@ -165,7 +312,7 @@ validateBox(int candleCount, float resistance, float support, bool volumeDeclini
     [isValid, boxHeightVal, boxHeightPct]
 
 // ===================================================================
-// SECTION 3: BREAKOUT DETECTION
+// SECTION 5: BREAKOUT DETECTION
 // ===================================================================
 
 // Function: Check for valid breakout
@@ -194,7 +341,7 @@ checkBreakdown(float support, float currentClose) =>
     isBreakdownSignal
 
 // ===================================================================
-// SECTION 4: BOX TRACKING (STATE MACHINE)
+// SECTION 6: BOX TRACKING (STATE MACHINE)
 // ===================================================================
 
 // Variables to track current box
@@ -203,18 +350,21 @@ var float currentSupport = na
 var int boxStartBar = na
 var bool inBox = false
 var box currentBoxDrawing = na
+var int currentBoxCandleCount = 0
 
 // Variables for tracking box detection
 var bool boxFound = false
 var float foundResistance = na
 var float foundSupport = na
 var int foundStartBar = na
+var int foundCandleCount = 0
 
 // Detect new box formation when not in a box
 boxFound := false
 foundResistance := na
 foundSupport := na
 foundStartBar := na
+foundCandleCount := 0
 
 if not inBox
     // Search for valid box from minimum to maximum candle range
@@ -228,6 +378,7 @@ if not inBox
                 foundResistance := res
                 foundSupport := sup
                 foundStartBar := bar_index - i
+                foundCandleCount := i
                 boxFound := true
 
 // Apply found box
@@ -235,17 +386,21 @@ if boxFound and not inBox
     currentResistance := foundResistance
     currentSupport := foundSupport
     boxStartBar := foundStartBar
+    currentBoxCandleCount := foundCandleCount
     inBox := true
 
-    // Draw box
+    // Get quality colors for the box
+    [quality, qualityFill, qualityBorderColor] = assessBoxQuality(currentBoxCandleCount)
+
+    // Draw box with quality-based colors
     if showBoxes
         currentBoxDrawing := box.new(
             boxStartBar,
             currentSupport,
             bar_index,
             currentResistance,
-            border_color=resistanceColor,
-            bgcolor=boxColor,
+            border_color=qualityBorderColor,
+            bgcolor=qualityFill,
             border_width=2
         )
 
@@ -253,15 +408,23 @@ if boxFound and not inBox
 if inBox and not na(currentBoxDrawing)
     box.set_right(currentBoxDrawing, bar_index)
 
+    // Update candle count
+    currentBoxCandleCount := bar_index - boxStartBar
+
+    // Update box colors based on current quality
+    [quality, qualityFill, qualityBorderColor] = assessBoxQuality(currentBoxCandleCount)
+    box.set_bgcolor(currentBoxDrawing, qualityFill)
+    box.set_border_color(currentBoxDrawing, qualityBorderColor)
+
     // Check if box is too old
-    candlesInBox = bar_index - boxStartBar
-    if candlesInBox > maxCandles
+    if currentBoxCandleCount > maxCandles
         inBox := false  // Box too old
         currentResistance := na
         currentSupport := na
+        currentBoxCandleCount := 0
 
 // ===================================================================
-// SECTION 5: ENTRY & EXIT SIGNALS
+// SECTION 7: ENTRY & EXIT SIGNALS
 // ===================================================================
 
 // Check for breakout (BUY signal)
@@ -288,10 +451,11 @@ if buySignal
     // Draw entry label
     if showBreakoutLabels
         volRatio = na(avgVol) or avgVol == 0 ? 0.0 : volume / avgVol
+        [quality, qc, qb] = assessBoxQuality(currentBoxCandleCount)
         label.new(
             bar_index,
             low,
-            text="BUY\n" + str.tostring(confidence, "#.0") + "%\nVol: " + str.tostring(volRatio, "#.#") + "x",
+            text="BUY [" + quality + "]\n" + str.tostring(confidence, "#.0") + "%\nVol: " + str.tostring(volRatio, "#.#") + "x",
             style=label.style_label_up,
             color=breakoutColor,
             textcolor=color.white,
@@ -323,6 +487,7 @@ if buySignal
     inBox := false
     currentResistance := na
     currentSupport := na
+    currentBoxCandleCount := 0
 
 // Check for breakdown (SELL signal)
 isBreakdownDetected = checkBreakdown(currentSupport, close)
@@ -346,24 +511,32 @@ if sellSignal
     inBox := false
     currentResistance := na
     currentSupport := na
+    currentBoxCandleCount := 0
 
 // ===================================================================
-// SECTION 6: VISUALIZATION
+// SECTION 8: VISUALIZATION
 // ===================================================================
 
 // Plot current box levels
 plot(inBox and showResistance ? currentResistance : na, "Resistance", color=resistanceColor, linewidth=2, style=plot.style_line)
 plot(inBox and showSupport ? currentSupport : na, "Support", color=supportColor, linewidth=2, style=plot.style_line)
 
-// Background color for active box
-bgcolor(inBox ? color.new(color.blue, 95) : na)
+// Background color based on box quality
+var color currentBgColor = na
+if inBox
+    [q, qFill, qBorder] = assessBoxQuality(currentBoxCandleCount)
+    currentBgColor := qFill
+else
+    currentBgColor := na
+
+bgcolor(inBox and showQualityIndicator ? currentBgColor : (inBox ? color.new(color.blue, 95) : na))
 
 // Plot buy/sell markers on chart
 plotshape(buySignal, "Buy Signal", shape.triangleup, location.belowbar, breakoutColor, size=size.small)
 plotshape(sellSignal, "Sell Signal", shape.triangledown, location.abovebar, breakdownColor, size=size.small)
 
 // ===================================================================
-// SECTION 7: STATISTICS TABLE
+// SECTION 9: STATISTICS TABLE
 // ===================================================================
 
 // Track performance
@@ -378,41 +551,62 @@ if sellSignal
 
 // Display statistics table
 if showStats
-    var table statsTable = table.new(position.top_right, 2, 7, border_width=1)
+    var table statsTable = table.new(position.top_right, 2, 10, border_width=1)
 
     if barstate.islast
+        // Get current quality
+        [currentQuality, cqFill, cqBorder] = assessBoxQuality(currentBoxCandleCount)
+
+        // Timeframe info
+        tfDisplay = timeframe.isintraday ? (str.contains(timeframe.period, "H") ? timeframe.period : timeframe.period + "m") : timeframe.period
+
         // Header
         table.cell(statsTable, 0, 0, "Darvas Box Stats", bgcolor=color.gray, text_color=color.white)
-        table.cell(statsTable, 1, 0, "", bgcolor=color.gray)
+        table.cell(statsTable, 1, 0, tfDisplay, bgcolor=color.gray, text_color=color.white)
+
+        // Mode indicator
+        table.cell(statsTable, 0, 1, "Mode", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 1, 1, autoMode ? "AUTO" : "MANUAL", bgcolor=autoMode ? color.new(color.blue, 70) : color.new(color.gray, 80))
+
+        // Parameters in use
+        table.cell(statsTable, 0, 2, "Min/Max Candles", bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 1, 2, str.tostring(minCandles) + "/" + str.tostring(maxCandles), bgcolor=color.new(color.gray, 90))
 
         // Statistics rows
-        table.cell(statsTable, 0, 1, "Buy Signals", bgcolor=color.new(color.gray, 80))
-        table.cell(statsTable, 1, 1, str.tostring(totalSignals), bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 0, 3, "Buy Signals", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 1, 3, str.tostring(totalSignals), bgcolor=color.new(color.gray, 80))
 
-        table.cell(statsTable, 0, 2, "Sell Signals", bgcolor=color.new(color.gray, 90))
-        table.cell(statsTable, 1, 2, str.tostring(totalBreakdowns), bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 0, 4, "Sell Signals", bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 1, 4, str.tostring(totalBreakdowns), bgcolor=color.new(color.gray, 90))
 
-        table.cell(statsTable, 0, 3, "Current Box", bgcolor=color.new(color.gray, 80))
-        table.cell(statsTable, 1, 3, inBox ? "Active" : "Searching", bgcolor=inBox ? color.new(color.green, 70) : color.new(color.gray, 80))
+        // Box quality status
+        qualityBgColor = inBox ? cqFill : color.new(color.gray, 80)
+        table.cell(statsTable, 0, 5, "Box Quality", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 1, 5, inBox ? currentQuality : "SEARCHING", bgcolor=qualityBgColor, text_color=inBox ? color.white : color.gray)
 
-        table.cell(statsTable, 0, 4, "Resistance", bgcolor=color.new(color.gray, 90))
-        table.cell(statsTable, 1, 4, inBox ? str.tostring(currentResistance, "#.#####") : "-", bgcolor=color.new(color.gray, 90))
+        // Candle count
+        table.cell(statsTable, 0, 6, "Candle Count", bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 1, 6, inBox ? str.tostring(currentBoxCandleCount) : "-", bgcolor=color.new(color.gray, 90))
 
-        table.cell(statsTable, 0, 5, "Support", bgcolor=color.new(color.gray, 80))
-        table.cell(statsTable, 1, 5, inBox ? str.tostring(currentSupport, "#.#####") : "-", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 0, 7, "Resistance", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 1, 7, inBox ? str.tostring(currentResistance, "#.#####") : "-", bgcolor=color.new(color.gray, 80))
+
+        table.cell(statsTable, 0, 8, "Support", bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 1, 8, inBox ? str.tostring(currentSupport, "#.#####") : "-", bgcolor=color.new(color.gray, 90))
 
         boxHeightDisplay = inBox and not na(currentResistance) and not na(currentSupport) ?
              str.tostring((currentResistance - currentSupport) / currentSupport * 100, "#.##") + "%" : "-"
-        table.cell(statsTable, 0, 6, "Box Height %", bgcolor=color.new(color.gray, 90))
-        table.cell(statsTable, 1, 6, boxHeightDisplay, bgcolor=color.new(color.gray, 90))
+        table.cell(statsTable, 0, 9, "Box Height %", bgcolor=color.new(color.gray, 80))
+        table.cell(statsTable, 1, 9, boxHeightDisplay, bgcolor=color.new(color.gray, 80))
 
 // ===================================================================
-// SECTION 8: ALERTS
+// SECTION 10: ALERTS
 // ===================================================================
 
 // Runtime alerts
 if buySignal
-    alert("Darvas Box BREAKOUT! Entry: " + str.tostring(close) +
+    [alertQuality, aqc, aqb] = assessBoxQuality(currentBoxCandleCount)
+    alert("Darvas Box BREAKOUT [" + alertQuality + "]! Entry: " + str.tostring(close) +
           " | SL: " + str.tostring(lastStopLoss) +
           " | TP1: " + str.tostring(lastTP1) +
           " | TP2: " + str.tostring(lastTP2) +

@@ -78,13 +78,13 @@ volumeLookback = input.int(
 )
 
 // Risk Management
-stopLossPercent = input.float(
-    3.0,
-    "Stop Loss %",
-    minval=1.0,
-    maxval=10.0,
-    step=0.5,
-    tooltip="Stop loss percentage below box support"
+slBufferPercent = input.float(
+    0.2,
+    "SL Buffer %",
+    minval=0.1,
+    maxval=1.0,
+    step=0.1,
+    tooltip="Small buffer below box support for stop loss (Classic Darvas: SL just below box bottom)"
 )
 
 tp1Multiplier = input.float(
@@ -280,7 +280,7 @@ if buySignal
     // Calculate TP and SL before resetting box
     boxHeightCalc = currentResistance - currentSupport
     lastEntryPrice := close
-    lastStopLoss := currentSupport * (1 - stopLossPercent / 100)
+    lastStopLoss := currentSupport * (1 - slBufferPercent / 100)
     lastTP1 := close + (boxHeightCalc * tp1Multiplier)
     lastTP2 := close + (boxHeightCalc * tp2Multiplier)
     lastTP3 := close + (boxHeightCalc * tp3Multiplier)

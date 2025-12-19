@@ -168,7 +168,8 @@ show_entry_management = input.bool(true, "Show Entry Management", group=group_en
 sl_type = input.string("Structural", "Stop Loss Type", options=["Structural", "Volume Failure", "Hybrid"], group=group_entry, tooltip="Structural: Below absorption zone\nVolume Failure: Based on volume rejection\nHybrid: Both methods")
 sl_lookback = input.int(10, "SL Lookback Bars", minval=5, maxval=30, group=group_entry, tooltip="Bars to look back for structural stop loss")
 volume_failure_mult = input.float(2.0, "Volume Failure Threshold", minval=1.5, maxval=4.0, step=0.1, group=group_entry, tooltip="Volume multiplier for failure detection")
-show_entry_table = input.bool(true, "Show Entry Table", group=group_entry)
+show_position_box = input.bool(true, "Show Position Box (Darvas Style)", group=group_entry)
+show_historical_entries = input.bool(true, "Show Historical Entry Labels", group=group_entry, tooltip="Keep old entry labels on chart for verification")
 color_entry_long = input.color(color.new(color.green, 20), "Long Entry Color", group=group_entry)
 color_entry_short = input.color(color.new(color.red, 20), "Short Entry Color", group=group_entry)
 color_sl_line = input.color(color.new(color.red, 40), "Stop Loss Color", group=group_entry)
@@ -178,23 +179,13 @@ var int position_dir = 0              // 1 = Long, -1 = Short, 0 = Flat
 var float entry_price = na
 var int entry_bar = na
 var float stop_loss = na
-var float absorption_zone_low = na   // For Long SL
-var float absorption_zone_high = na  // For Short SL
-var int bars_in_trade = 0
-var bool sl_hit = false
-var string sl_hit_reason = ""
+var float absorption_zone_low = na
+var float absorption_zone_high = na
+var int position_count = 0            // Track total positions for labeling
 
-// Line/Label variables
-var line entry_line = na
-var line sl_line = na
-var label entry_label = na
-var label sl_label = na
-
-// Track bars in trade
-if position_dir != 0
-    bars_in_trade := bars_in_trade + 1
-else
-    bars_in_trade := 0
+// Current position lines (only for active position)
+var line current_entry_line = na
+var line current_sl_line = na
 
 // === TRACK ABSORPTION ZONES FOR STRUCTURAL SL ===
 var float recent_absorption_low = na
@@ -206,75 +197,82 @@ if is_strong_absorption
 
 // === CALCULATE TAPE-DERIVED STOP LOSS ===
 calc_structural_sl_long() =>
-    // Use absorption zone low or recent swing low
     float zone_low = not na(recent_absorption_low) ? recent_absorption_low : ta.lowest(low, sl_lookback)
     float buffer = ta.atr(14) * 0.1
     zone_low - buffer
 
 calc_structural_sl_short() =>
-    // Use absorption zone high or recent swing high
     float zone_high = not na(recent_absorption_high) ? recent_absorption_high : ta.highest(high, sl_lookback)
     float buffer = ta.atr(14) * 0.1
     zone_high + buffer
 
-// === CHECK STOP LOSS CONDITIONS ===
-// Volume Failure: Price closes against position with high volume and negative delta
-volume_delta_estimate = (close - open) * volume
-volume_failure_long = position_dir == 1 and close < entry_price and volume_ratio > volume_failure_mult and volume_delta_estimate < 0
-volume_failure_short = position_dir == -1 and close > entry_price and volume_ratio > volume_failure_mult and volume_delta_estimate > 0
+// ═══════════════════════════════════════════════════════════════════════════════
+// POSITION LOGIC - STRICT 1:1 SYNC WITH BUY/SELL SIGNALS
+// ═══════════════════════════════════════════════════════════════════════════════
+// Key fix: Position updates on EVERY is_aggressive_buy/is_aggressive_sell signal
+// NOT conditional on position_dir == 0
 
-// Price hits structural stop
-price_sl_hit_long = position_dir == 1 and not na(stop_loss) and low <= stop_loss
-price_sl_hit_short = position_dir == -1 and not na(stop_loss) and high >= stop_loss
+// Detect new signals (these are the ORIGINAL system signals)
+new_long_signal = is_aggressive_buy
+new_short_signal = is_aggressive_sell
 
-// Combined stop logic based on selected type
-stop_triggered = false
-if sl_type == "Structural"
-    stop_triggered := price_sl_hit_long or price_sl_hit_short
-    if price_sl_hit_long or price_sl_hit_short
-        sl_hit_reason := "STRUCTURAL SL"
-else if sl_type == "Volume Failure"
-    stop_triggered := volume_failure_long or volume_failure_short
-    if volume_failure_long or volume_failure_short
-        sl_hit_reason := "VOLUME FAILURE"
-else  // Hybrid
-    stop_triggered := price_sl_hit_long or price_sl_hit_short or volume_failure_long or volume_failure_short
-    if price_sl_hit_long or price_sl_hit_short
-        sl_hit_reason := "STRUCTURAL SL"
-    else if volume_failure_long or volume_failure_short
-        sl_hit_reason := "VOLUME FAILURE"
+// === PROCESS NEW LONG SIGNAL ===
+if show_entry_management and new_long_signal
+    // Delete current position lines (will redraw)
+    line.delete(current_entry_line)
+    line.delete(current_sl_line)
 
-// === PROCESS EXITS ===
-if show_entry_management and position_dir != 0 and stop_triggered
-    sl_hit := true
-    position_dir := 0
-    line.delete(entry_line)
-    line.delete(sl_line)
-    label.delete(entry_label)
-    label.delete(sl_label)
+    // Create historical entry label if enabled (keeps old entries visible)
+    if show_historical_entries
+        position_count := position_count + 1
+        label.new(bar_index, low, "L" + str.tostring(position_count),
+                  style=label.style_label_up, color=color_entry_long,
+                  textcolor=color.white, size=size.tiny,
+                  tooltip="LONG Entry #" + str.tostring(position_count) + "\nPrice: " + str.tostring(close, format.mintick))
 
-// === PROCESS ENTRIES ===
-// Long Entry: Aggressive Buy signal
-if show_entry_management and is_aggressive_buy and position_dir == 0
+    // Update position state - ALWAYS on new signal
     position_dir := 1
     entry_price := close
     entry_bar := bar_index
     absorption_zone_low := not na(recent_absorption_low) ? recent_absorption_low : ta.lowest(low, sl_lookback)
     stop_loss := calc_structural_sl_long()
-    bars_in_trade := 0
-    sl_hit := false
-    sl_hit_reason := ""
 
-// Short Entry: Aggressive Sell signal
-if show_entry_management and is_aggressive_sell and position_dir == 0
+// === PROCESS NEW SHORT SIGNAL ===
+if show_entry_management and new_short_signal
+    // Delete current position lines (will redraw)
+    line.delete(current_entry_line)
+    line.delete(current_sl_line)
+
+    // Create historical entry label if enabled
+    if show_historical_entries
+        position_count := position_count + 1
+        label.new(bar_index, high, "S" + str.tostring(position_count),
+                  style=label.style_label_down, color=color_entry_short,
+                  textcolor=color.white, size=size.tiny,
+                  tooltip="SHORT Entry #" + str.tostring(position_count) + "\nPrice: " + str.tostring(close, format.mintick))
+
+    // Update position state - ALWAYS on new signal
     position_dir := -1
     entry_price := close
     entry_bar := bar_index
     absorption_zone_high := not na(recent_absorption_high) ? recent_absorption_high : ta.highest(high, sl_lookback)
     stop_loss := calc_structural_sl_short()
-    bars_in_trade := 0
-    sl_hit := false
-    sl_hit_reason := ""
+
+// === CHECK STOP LOSS CONDITIONS ===
+volume_delta_estimate = (close - open) * volume
+volume_failure_long = position_dir == 1 and not na(entry_price) and close < entry_price and volume_ratio > volume_failure_mult and volume_delta_estimate < 0
+volume_failure_short = position_dir == -1 and not na(entry_price) and close > entry_price and volume_ratio > volume_failure_mult and volume_delta_estimate > 0
+
+price_sl_hit_long = position_dir == 1 and not na(stop_loss) and low <= stop_loss
+price_sl_hit_short = position_dir == -1 and not na(stop_loss) and high >= stop_loss
+
+stop_triggered = false
+if sl_type == "Structural"
+    stop_triggered := price_sl_hit_long or price_sl_hit_short
+else if sl_type == "Volume Failure"
+    stop_triggered := volume_failure_long or volume_failure_short
+else  // Hybrid
+    stop_triggered := price_sl_hit_long or price_sl_hit_short or volume_failure_long or volume_failure_short
 
 // === DYNAMIC SL ADJUSTMENT (Trail on new absorption) ===
 if position_dir == 1 and is_strong_absorption and low > entry_price
@@ -287,52 +285,63 @@ if position_dir == -1 and is_strong_absorption and high < entry_price
     if new_sl < stop_loss
         stop_loss := new_sl
 
-// === VISUALIZATION ===
+// === DRAW CURRENT POSITION LINES ===
 if show_entry_management and position_dir != 0 and not na(entry_price) and not na(stop_loss)
-    line.delete(entry_line)
-    line.delete(sl_line)
-    label.delete(entry_label)
-    label.delete(sl_label)
+    line.delete(current_entry_line)
+    line.delete(current_sl_line)
 
-    color pos_color = position_dir == 1 ? color_entry_long : color_entry_short
-    string dir_text = position_dir == 1 ? "LONG" : "SHORT"
+    color line_color = position_dir == 1 ? color_entry_long : color_entry_short
+    current_entry_line := line.new(entry_bar, entry_price, bar_index + 3, entry_price, color=line_color, width=2, style=line.style_solid)
+    current_sl_line := line.new(entry_bar, stop_loss, bar_index + 3, stop_loss, color=color_sl_line, width=1, style=line.style_dashed)
 
-    entry_line := line.new(entry_bar, entry_price, bar_index + 5, entry_price, color=pos_color, width=2, style=line.style_solid)
-    entry_label := label.new(bar_index + 6, entry_price, dir_text + ": " + str.tostring(entry_price, format.mintick), style=label.style_label_left, color=pos_color, textcolor=color.white, size=size.small)
+// ═══════════════════════════════════════════════════════════════════════════════
+// DARVAS BOX STYLE - POSITION INFO BOX (Top Right)
+// ═══════════════════════════════════════════════════════════════════════════════
 
-    sl_line := line.new(entry_bar, stop_loss, bar_index + 5, stop_loss, color=color_sl_line, width=1, style=line.style_dashed)
-    float sl_dist = math.abs(entry_price - stop_loss) / entry_price * 100
-    sl_label := label.new(bar_index + 6, stop_loss, "SL (" + sl_type + "): " + str.tostring(stop_loss, format.mintick) + " [-" + str.tostring(sl_dist, "#.##") + "%]", style=label.style_label_left, color=color_sl_line, textcolor=color.white, size=size.tiny)
+if show_position_box and show_entry_management and barstate.islast
+    var table pos_box = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 80), border_width=1, border_color=color.gray)
 
-// === ENTRY STATUS TABLE ===
-if show_entry_table and show_entry_management and barstate.islast
-    var table entry_tbl = table.new(position.bottom_right, 2, 7, border_width=1)
+    // Determine colors and status
+    color header_bg = position_dir == 1 ? color.new(color.green, 30) : position_dir == -1 ? color.new(color.red, 30) : color.new(color.gray, 30)
+    string status_text = position_dir == 1 ? "LONG" : position_dir == -1 ? "SHORT" : "NEUTRAL"
 
-    color hdr_bg = position_dir == 1 ? color_entry_long : position_dir == -1 ? color_entry_short : color.gray
-    table.cell(entry_tbl, 0, 0, "ENTRY STATUS", bgcolor=hdr_bg, text_color=color.white, text_size=size.small)
-    table.cell(entry_tbl, 1, 0, "VALUE", bgcolor=hdr_bg, text_color=color.white, text_size=size.small)
+    // Calculate P&L
+    float pnl_value = 0.0
+    float pnl_pct = 0.0
+    if position_dir != 0 and not na(entry_price) and entry_price != 0
+        pnl_value := position_dir == 1 ? close - entry_price : entry_price - close
+        pnl_pct := pnl_value / entry_price * 100
 
-    string pos_str = position_dir == 1 ? "LONG" : position_dir == -1 ? "SHORT" : "FLAT"
-    table.cell(entry_tbl, 0, 1, "Position", text_size=size.small)
-    table.cell(entry_tbl, 1, 1, pos_str, bgcolor=hdr_bg, text_color=color.white, text_size=size.small)
+    color pnl_color = pnl_pct > 0 ? color.new(color.lime, 20) : pnl_pct < 0 ? color.new(color.red, 20) : color.new(color.gray, 50)
 
-    table.cell(entry_tbl, 0, 2, "Entry", text_size=size.small)
-    table.cell(entry_tbl, 1, 2, position_dir != 0 and not na(entry_price) ? str.tostring(entry_price, format.mintick) : "---", text_size=size.small)
+    // Row 0: Header
+    table.cell(pos_box, 0, 0, "POSITION", bgcolor=header_bg, text_color=color.white, text_size=size.small)
+    table.cell(pos_box, 1, 0, status_text, bgcolor=header_bg, text_color=color.white, text_size=size.small)
 
-    table.cell(entry_tbl, 0, 3, "Stop (" + sl_type + ")", text_size=size.small)
-    table.cell(entry_tbl, 1, 3, position_dir != 0 and not na(stop_loss) ? str.tostring(stop_loss, format.mintick) : "---", text_size=size.small)
+    // Row 1: Entry Price
+    table.cell(pos_box, 0, 1, "Entry", text_color=color.silver, text_size=size.small)
+    string entry_text = position_dir != 0 and not na(entry_price) ? str.tostring(entry_price, format.mintick) : "---"
+    table.cell(pos_box, 1, 1, entry_text, text_color=color.white, text_size=size.small)
 
-    float risk_pct = position_dir != 0 and not na(entry_price) and not na(stop_loss) ? math.abs(entry_price - stop_loss) / entry_price * 100 : 0
-    table.cell(entry_tbl, 0, 4, "Risk %", text_size=size.small)
-    table.cell(entry_tbl, 1, 4, position_dir != 0 ? str.tostring(risk_pct, "#.##") + "%" : "---", text_size=size.small)
+    // Row 2: Current Price
+    table.cell(pos_box, 0, 2, "Current", text_color=color.silver, text_size=size.small)
+    table.cell(pos_box, 1, 2, str.tostring(close, format.mintick), text_color=color.white, text_size=size.small)
 
-    float pnl = position_dir == 1 ? (close - entry_price) / entry_price * 100 : position_dir == -1 ? (entry_price - close) / entry_price * 100 : 0
-    color pnl_bg = pnl > 0 ? color.new(color.green, 70) : pnl < 0 ? color.new(color.red, 70) : na
-    table.cell(entry_tbl, 0, 5, "P&L %", text_size=size.small)
-    table.cell(entry_tbl, 1, 5, position_dir != 0 ? str.tostring(pnl, "#.##") + "%" : "---", bgcolor=pnl_bg, text_size=size.small)
+    // Row 3: Stop Loss
+    table.cell(pos_box, 0, 3, "Stop (" + sl_type + ")", text_color=color.silver, text_size=size.small)
+    string sl_text = position_dir != 0 and not na(stop_loss) ? str.tostring(stop_loss, format.mintick) : "---"
+    table.cell(pos_box, 1, 3, sl_text, text_color=color.red, text_size=size.small)
 
-    table.cell(entry_tbl, 0, 6, "Last Exit", text_size=size.small)
-    table.cell(entry_tbl, 1, 6, sl_hit_reason != "" ? sl_hit_reason : "---", text_size=size.small)
+    // Row 4: P&L
+    table.cell(pos_box, 0, 4, "P&L", text_color=color.silver, text_size=size.small)
+    string pnl_text = position_dir != 0 ? str.tostring(pnl_pct, "#.##") + "%" : "---"
+    table.cell(pos_box, 1, 4, pnl_text, bgcolor=position_dir != 0 ? pnl_color : na, text_color=color.white, text_size=size.small)
+
+    // Row 5: Signal Source
+    table.cell(pos_box, 0, 5, "Signal", text_color=color.silver, text_size=size.small)
+    string signal_text = new_long_signal ? "NEW BUY" : new_short_signal ? "NEW SELL" : position_dir != 0 ? "HOLDING" : "WAITING"
+    color signal_bg = new_long_signal ? color.new(color.green, 50) : new_short_signal ? color.new(color.red, 50) : na
+    table.cell(pos_box, 1, 5, signal_text, bgcolor=signal_bg, text_color=color.white, text_size=size.small)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CANDLE COLORING

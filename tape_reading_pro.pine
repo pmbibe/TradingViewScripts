@@ -260,10 +260,16 @@ var float max_favorable = na          // Track max favorable excursion for TP
 var float breakout_base = na          // Reference price for breakout
 var int bars_since_entry = 0          // For time invalidation
 
-// Current position lines (only for active position)
-var line current_entry_line = na
-var line current_sl_line = na
-var line current_tp1_line = na
+// Darvas style lines (extend forward from entry)
+var line darvas_entry_line = na
+var line darvas_sl_line = na
+var line darvas_tp1_line = na
+var label darvas_entry_label = na
+var label darvas_sl_label = na
+var label darvas_tp1_label = na
+
+// Line extension length
+line_extend_bars = 50
 
 // === TRACK ABSORPTION ZONES FOR STRUCTURAL SL ===
 var float recent_absorption_low = na
@@ -327,21 +333,15 @@ calc_tp1_short() =>
 
 // === PROCESS NEW LONG SIGNAL ===
 if show_entry_management and new_long_signal
-    // Delete current position lines (will redraw)
-    line.delete(current_entry_line)
-    line.delete(current_sl_line)
-    line.delete(current_tp1_line)
+    // Delete previous Darvas lines and labels
+    line.delete(darvas_entry_line)
+    line.delete(darvas_sl_line)
+    line.delete(darvas_tp1_line)
+    label.delete(darvas_entry_label)
+    label.delete(darvas_sl_label)
+    label.delete(darvas_tp1_label)
 
-    // Create historical entry label if enabled (keeps old entries visible)
-    if show_historical_entries
-        position_count := position_count + 1
-        string entry_type = entry_filter == "Aggressive Only" ? "AGG" : had_recent_accumulation ? "SM+BO" : "BO"
-        label.new(bar_index, low, "L" + str.tostring(position_count),
-                  style=label.style_label_up, color=color_entry_long,
-                  textcolor=color.white, size=size.tiny,
-                  tooltip="LONG Entry #" + str.tostring(position_count) + " (" + entry_type + ")\nPrice: " + str.tostring(close, format.mintick))
-
-    // Update position state
+    // Update position state FIRST (needed for TP calculation)
     position_dir := 1
     entry_price := close
     entry_bar := bar_index
@@ -354,23 +354,48 @@ if show_entry_management and new_long_signal
     tp1_level := calc_tp1_long()
     exit_reason := na
 
+    // Track position count
+    position_count := position_count + 1
+    string entry_type = entry_filter == "Aggressive Only" ? "AGG" : had_recent_accumulation ? "SM+BO" : "BO"
+
+    // Create entry label at signal bar
+    label.new(bar_index, low, "BUY\n" + entry_type,
+              style=label.style_label_up, color=color_entry_long,
+              textcolor=color.white, size=size.normal)
+
+    // Draw Darvas style lines (extend forward)
+    darvas_entry_line := line.new(bar_index, entry_price, bar_index + line_extend_bars, entry_price,
+                                   color=color_entry_long, style=line.style_solid, width=2)
+    darvas_sl_line := line.new(bar_index, stop_loss, bar_index + line_extend_bars, stop_loss,
+                                color=color_sl_line, style=line.style_dashed, width=2)
+    darvas_tp1_line := line.new(bar_index, tp1_level, bar_index + line_extend_bars, tp1_level,
+                                 color=color_tp_line, style=line.style_solid, width=1)
+
+    // Add labels at end of lines (Darvas style)
+    darvas_entry_label := label.new(bar_index + line_extend_bars, entry_price,
+                                     "Entry: " + str.tostring(entry_price, format.mintick),
+                                     style=label.style_label_left, color=color_entry_long,
+                                     textcolor=color.white, size=size.small)
+    darvas_sl_label := label.new(bar_index + line_extend_bars, stop_loss,
+                                  "SL: " + str.tostring(stop_loss, format.mintick),
+                                  style=label.style_label_left, color=color.red,
+                                  textcolor=color.white, size=size.small)
+    darvas_tp1_label := label.new(bar_index + line_extend_bars, tp1_level,
+                                   "TP1: " + str.tostring(tp1_level, format.mintick),
+                                   style=label.style_label_left, color=color.green,
+                                   textcolor=color.white, size=size.small)
+
 // === PROCESS NEW SHORT SIGNAL ===
 if show_entry_management and new_short_signal
-    // Delete current position lines (will redraw)
-    line.delete(current_entry_line)
-    line.delete(current_sl_line)
-    line.delete(current_tp1_line)
+    // Delete previous Darvas lines and labels
+    line.delete(darvas_entry_line)
+    line.delete(darvas_sl_line)
+    line.delete(darvas_tp1_line)
+    label.delete(darvas_entry_label)
+    label.delete(darvas_sl_label)
+    label.delete(darvas_tp1_label)
 
-    // Create historical entry label if enabled
-    if show_historical_entries
-        position_count := position_count + 1
-        string entry_type = entry_filter == "Aggressive Only" ? "AGG" : had_recent_accumulation ? "SM+BO" : "BO"
-        label.new(bar_index, high, "S" + str.tostring(position_count),
-                  style=label.style_label_down, color=color_entry_short,
-                  textcolor=color.white, size=size.tiny,
-                  tooltip="SHORT Entry #" + str.tostring(position_count) + " (" + entry_type + ")\nPrice: " + str.tostring(close, format.mintick))
-
-    // Update position state
+    // Update position state FIRST (needed for TP calculation)
     position_dir := -1
     entry_price := close
     entry_bar := bar_index
@@ -382,6 +407,37 @@ if show_entry_management and new_short_signal
     stop_loss := calc_structural_sl_short()
     tp1_level := calc_tp1_short()
     exit_reason := na
+
+    // Track position count
+    position_count := position_count + 1
+    string entry_type = entry_filter == "Aggressive Only" ? "AGG" : had_recent_accumulation ? "SM+BO" : "BO"
+
+    // Create entry label at signal bar
+    label.new(bar_index, high, "SELL\n" + entry_type,
+              style=label.style_label_down, color=color_entry_short,
+              textcolor=color.white, size=size.normal)
+
+    // Draw Darvas style lines (extend forward)
+    darvas_entry_line := line.new(bar_index, entry_price, bar_index + line_extend_bars, entry_price,
+                                   color=color_entry_short, style=line.style_solid, width=2)
+    darvas_sl_line := line.new(bar_index, stop_loss, bar_index + line_extend_bars, stop_loss,
+                                color=color_sl_line, style=line.style_dashed, width=2)
+    darvas_tp1_line := line.new(bar_index, tp1_level, bar_index + line_extend_bars, tp1_level,
+                                 color=color_tp_line, style=line.style_solid, width=1)
+
+    // Add labels at end of lines (Darvas style)
+    darvas_entry_label := label.new(bar_index + line_extend_bars, entry_price,
+                                     "Entry: " + str.tostring(entry_price, format.mintick),
+                                     style=label.style_label_left, color=color_entry_short,
+                                     textcolor=color.white, size=size.small)
+    darvas_sl_label := label.new(bar_index + line_extend_bars, stop_loss,
+                                  "SL: " + str.tostring(stop_loss, format.mintick),
+                                  style=label.style_label_left, color=color.red,
+                                  textcolor=color.white, size=size.small)
+    darvas_tp1_label := label.new(bar_index + line_extend_bars, tp1_level,
+                                   "TP1: " + str.tostring(tp1_level, format.mintick),
+                                   style=label.style_label_left, color=color.green,
+                                   textcolor=color.white, size=size.small)
 
 // === UPDATE BARS SINCE ENTRY ===
 if position_dir != 0
@@ -474,13 +530,17 @@ if tp2_triggered and position_dir != 0
         float label_price = position_dir == 1 ? high : low
         label.new(bar_index, label_price, "EXIT",
                   style=position_dir == 1 ? label.style_label_down : label.style_label_up,
-                  color=color_exhaustion, textcolor=color.white, size=size.tiny,
+                  color=color_exhaustion, textcolor=color.white, size=size.small,
                   tooltip=tp_reason + "\nPrice: " + str.tostring(close, format.mintick))
     exit_reason := tp_reason
+    // Delete Darvas lines and labels
+    line.delete(darvas_entry_line)
+    line.delete(darvas_sl_line)
+    line.delete(darvas_tp1_line)
+    label.delete(darvas_entry_label)
+    label.delete(darvas_sl_label)
+    label.delete(darvas_tp1_label)
     // Reset position
-    line.delete(current_entry_line)
-    line.delete(current_sl_line)
-    line.delete(current_tp1_line)
     position_dir := 0
     entry_price := na
     stop_loss := na
@@ -491,15 +551,19 @@ if tp2_triggered and position_dir != 0
 if stop_triggered and position_dir != 0
     if show_historical_entries and not na(sl_reason)
         float label_price = position_dir == 1 ? low : high
-        label.new(bar_index, label_price, "SL",
+        label.new(bar_index, label_price, "SL HIT",
                   style=position_dir == 1 ? label.style_label_up : label.style_label_down,
-                  color=color_sl_line, textcolor=color.white, size=size.tiny,
+                  color=color.red, textcolor=color.white, size=size.small,
                   tooltip=sl_reason + "\nPrice: " + str.tostring(close, format.mintick))
     exit_reason := sl_reason
+    // Delete Darvas lines and labels
+    line.delete(darvas_entry_line)
+    line.delete(darvas_sl_line)
+    line.delete(darvas_tp1_line)
+    label.delete(darvas_entry_label)
+    label.delete(darvas_sl_label)
+    label.delete(darvas_tp1_label)
     // Reset position
-    line.delete(current_entry_line)
-    line.delete(current_sl_line)
-    line.delete(current_tp1_line)
     position_dir := 0
     entry_price := na
     stop_loss := na
@@ -516,20 +580,6 @@ if position_dir == -1 and is_strong_absorption and high < entry_price
     float new_sl = high + ta.atr(14) * 0.1
     if new_sl < stop_loss
         stop_loss := new_sl
-
-// === DRAW CURRENT POSITION LINES ===
-if show_entry_management and position_dir != 0 and not na(entry_price) and not na(stop_loss)
-    line.delete(current_entry_line)
-    line.delete(current_sl_line)
-    line.delete(current_tp1_line)
-
-    color line_color = position_dir == 1 ? color_entry_long : color_entry_short
-    current_entry_line := line.new(entry_bar, entry_price, bar_index + 3, entry_price, color=line_color, width=2, style=line.style_solid)
-    current_sl_line := line.new(entry_bar, stop_loss, bar_index + 3, stop_loss, color=color_sl_line, width=1, style=line.style_dashed)
-
-    // Draw TP1 line if not yet hit
-    if show_tp_management and tp1_enabled and not tp1_hit and not na(tp1_level)
-        current_tp1_line := line.new(entry_bar, tp1_level, bar_index + 3, tp1_level, color=color_tp_line, width=1, style=line.style_dotted)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DARVAS BOX STYLE - POSITION INFO BOX (Top Right)
